@@ -1,0 +1,5 @@
+{
+  "hooks": {
+    "pre-commit": ".ai/hooks/pre-commit-ai-check.sh"
+  }
+}

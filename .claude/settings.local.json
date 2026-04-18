@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(cp -r .ai D:/work/novel-workflow/)",
+      "Bash(cp -r .claude D:/work/novel-workflow/)",
+      "Bash(cp -r .cursor D:/work/novel-workflow/)",
+      "Bash(cp -r .windsurf D:/work/novel-workflow/)",
+      "Bash(cp -r .github D:/work/novel-workflow/)"
+    ]
+  }
+}

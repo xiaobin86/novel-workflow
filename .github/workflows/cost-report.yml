@@ -1,0 +1,11 @@
+name: Cost Report
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Every Monday 9AM
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # TODO: Generate and post cost report

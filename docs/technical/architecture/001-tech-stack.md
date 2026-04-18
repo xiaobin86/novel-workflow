@@ -18,12 +18,19 @@ Accepted
 ### AI 服务层（Docker 微服务）
 每个流程步骤作为独立 Docker 容器，通过 HTTP 与 Next.js 通信：
 
-| 服务 | 端口 | 技术 | 职责 |
-|------|------|------|------|
-| storyboard-service | 8001 | FastAPI + Python | 小说 → 分镜 JSON（Kimi API） |
-| image-service | 8002 | FastAPI + Python | 分镜 → 图片（FLUX.1-dev，本地 GPU） |
-| video-service | 8003 | FastAPI + Python | 分镜 → 视频片段（Wan2.1，本地 GPU）+ TTS（edge-tts） |
-| assembly-service | 8004 | FastAPI + Python | 素材 → 最终 MP4（FFmpeg） |
+| 服务 | 容器内端口 | 宿主机端口 | 技术 | 职责 |
+|------|-----------|-----------|------|------|
+| storyboard-service | 8000 | 8001 | FastAPI + Python | 小说 → 分镜 JSON（Kimi API） |
+| image-service | 8000 | 8002 | FastAPI + Python | 分镜 → 图片（FLUX.1-dev，本地 GPU） |
+| tts-service | 8000 | 8003 | FastAPI + Python | 分镜文本 → 旁白/对话 WAV（edge-tts） |
+| video-service | 8000 | 8004 | FastAPI + Python | 分镜 → 视频片段（Wan2.1，本地 GPU） |
+| assembly-service | 8000 | 8005 | FastAPI + Python | 素材 → 最终 MP4 + SRT（FFmpeg） |
+
+> **端口设计说明**：
+> - 各服务容器内部统一监听 **8000**，简化 Dockerfile 配置
+> - 宿主机通过 **8001-8005** 区分不同服务，便于本地调试
+> - Docker Compose 内部网络中，服务间通过服务名（如 `http://image-service:8000`）访问
+> - Next.js 在 Docker 网络内通过服务名访问，在宿主机开发时通过 localhost + 端口访问
 
 ### AI Provider 模式
 每个服务内部使用 Provider 抽象层，统一标准输入输出接口，支持未来从本地 GPU 切换至云端（Replicate、fal.ai 等）而不改动上层逻辑。

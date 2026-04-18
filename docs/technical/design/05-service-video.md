@@ -306,19 +306,133 @@ MODEL_TTL_SECONDS=600
 
 ---
 
-## 10. 处理时序
+## 10. Provider 实现方式：Subprocess vs Direct Import
+
+### 背景
+
+Wan2.1 原格式推理有两种调用方式：
+1. **Direct Import**：Python 中 `import wan.text2video` 直接调用 `WanT2V.generate()`
+2. **Subprocess**：通过 `subprocess` 调用 `Wan2.1/generate.py` 脚本
+
+**v1.0 选择：Subprocess 方式**
+
+原因：
+- Wan 原格式推理代码依赖复杂的相对 import 和特定环境配置，在 Docker 容器中直接 import 需要大量路径调整
+- Subprocess 方式与 MVP 验证过的方案一致，风险更低
+- 模型加载/卸载由 subprocess 进程生命周期自然管理（进程结束即释放 VRAM）
+
+### Subprocess 稳定性保障机制
+
+由于 subprocess 方式存在进程管理、进度黑盒、并发冲突等风险，需以下多层保障：
+
+#### Layer 1: 并发控制
+```python
+# 全局信号量，确保同时只有一个 generate.py 运行
+# （不仅 GPU 串行，连 generate.py 调用也串行）
+_generate_lock = asyncio.Semaphore(1)
+
+async def generate_clip(...):
+    async with _generate_lock:
+        # 执行 subprocess
+```
+
+#### Layer 2: 超时保护 + 进程清理
+```python
+async def run_with_timeout(cmd, timeout=600):
+    proc = await asyncio.create_subprocess_exec(*cmd, ...)
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return proc.returncode, stdout, stderr
+    except asyncio.TimeoutError:
+        proc.kill()  # 强制终止
+        await proc.wait()
+        raise RuntimeError(f"Subprocess 超时 (> {timeout}s)")
+    finally:
+        # 确保进程被清理，避免僵尸进程
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+```
+
+#### Layer 3: 临时文件 + 原子写入
+```python
+# 先生成到临时文件，成功后再 rename
+output_tmp = output_path + ".tmp.mp4"
+cmd = [..."--save_file", output_tmp, ...]
+# ... 执行 subprocess ...
+if success and os.path.exists(output_tmp) and os.path.getsize(output_tmp) > 0:
+    os.replace(output_tmp, output_path)  # 原子替换
+```
+
+#### Layer 4: 输出验证
+```python
+async def validate_output(video_path):
+    """使用 ffprobe 验证视频文件完整性"""
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+           "-of", "default=noprint_wrappers=1:nokey=1", video_path]
+    result = await run_subprocess(cmd)
+    duration = float(result.stdout.strip())
+    if duration < 1.0:  # 时长异常
+        raise ValueError(f"视频时长异常: {duration}s")
+```
+
+#### Layer 5: 进度模拟（SSE 心跳）
+
+由于 subprocess 无法提供逐帧进度，SSE 推送采用**阶段式进度**：
+```
+event: progress
+data: {"shot_id":"E01_001","done":0,"total":10,"message":"启动 Wan 生成进程..."}
+
+# ~5分钟后（进程完成时）
+event: progress
+data: {"shot_id":"E01_001","done":1,"total":10,"message":"生成完成 (5.2s)","skipped":false}
+```
+
+#### Layer 6: 错误捕获与重试
+
+```python
+if returncode != 0:
+    # 解析 stderr 中的错误类型
+    if "CUDA out of memory" in stderr:
+        raise CUDAOutOfMemoryError(retryable=True)
+    elif "checkpoint" in stderr.lower():
+        raise ModelNotFoundError(retryable=False)
+    else:
+        raise SubprocessError(stderr[:500], retryable=True)
+```
+
+### 模型加载策略调整
+
+采用 subprocess 方式后，`model_manager.py` 的行为需要调整：
+
+- **不再需要在服务进程内加载/卸载模型**（subprocess 进程自己管理）
+- `model_manager` 简化为**进程锁管理器**：确保只有一个 subprocess 在运行
+- `/model/status` 返回 "subprocess_ready"（表示环境就绪，可启动生成）
+- `/model/unload` 变为 kill 当前运行的 subprocess（如有）
+
+### 未来优化路径（v2.0）
+
+研究直接 import `wan.text2video` 方案，优势：
+- 逐帧/逐步进度反馈（真正的实时 SSE）
+- 更精细的显存管理（不依赖进程边界）
+- 更优雅的错误捕获（Python 异常而非进程退出码）
+- 支持批量推理优化（如 pipeline 并行）
+
+---
+
+## 11. 处理时序
 
 ```
 时间（相对）   事件
 t=0           POST /jobs → 202
 t=0           GET events (SSE 建立)
-t=0~120s      Wan 模型加载（首次，原格式 16.6GB，约 2min）
-t=120s        开始 E01_001（5min/shot）
-t=420s        E01_001 完成，emit progress(done=1)
-t=720s        E01_002 完成，emit progress(done=2)
+t=0           获取 _generate_lock，启动 subprocess
+t=0~5s        Wan 环境初始化（subprocess 内）
+t=5~305s      E01_001 生成中（subprocess 运行，前端显示"生成中..."）
+t=305s        subprocess 完成，验证输出文件
+t=305s        emit progress(done=1)，释放锁
+t=305s        下一个 shot 获取锁，启动 subprocess
 ...
-t=120+10×300  全部 10 个 shot 完成，emit complete
-              编排器调用 POST /model/unload
 ```
 
-**预期耗时（10 shots，无缓存）：** 约 52 分钟（2min 加载 + 10×5min 推理）
+**预期耗时（10 shots，无缓存）：** 约 52 分钟（10×5min 推理 + 进程启动开销）

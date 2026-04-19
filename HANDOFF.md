@@ -1,9 +1,24 @@
 # Handoff Document — Novel Workflow v1.0
 
-> **生成时间**：2026-04-18  
+> **生成时间**：2026-04-19  
 > **生成者**：Sisyphus Agent  
 > **状态**：Phase 1-3 开发中（由另一 Agent 执行）  
 > **目标读者**：执行编码的 Agent
+
+---
+
+## 0. 开始前的第一步（必须按顺序执行）
+
+```bash
+# Step 1: 创建并推送 develop 分支（只需执行一次）
+git checkout -b develop master
+git push -u origin develop
+
+# Step 2: 切出第一个 feature 分支，开始编码
+git checkout -b feature/phase-1-skeleton develop
+```
+
+**不要在 master 上直接编码。**
 
 ---
 
@@ -32,7 +47,7 @@
 | tts-service | `docs/technical/design/04-service-tts.md` | 完整 |
 | video-service | `docs/technical/design/05-service-video.md` | 完整 |
 | assembly-service | `docs/technical/design/06-service-assembly.md` | 完整 |
-| WebUI 设计 | `docs/technical/design/07-webui-design.md` | 完整（750行）|
+| WebUI 设计 | `docs/technical/design/07-webui-design.md` | 完整（含所有 API Routes、组件、SSE hook）|
 | 技术架构 | `docs/technical/architecture/001-tech-stack.md` | 完整 |
 | 开发计划 | `docs/development-plan.md` | 完整（含用户确认）|
 | UI 调研 | `docs/research/ui-design/` | 完整 |
@@ -305,14 +320,32 @@ image-service 和 video-service 不能同时运行（共享 12GB VRAM）
 
 ### 4.4 Video-Service Subprocess 方式
 
-**关键决策**：video-service 不直接 import Wan 模型，而是通过 subprocess 调用 `Wan2.1/generate.py`。
+**关键决策**：video-service **不直接 import Wan 模型**，而是通过 subprocess 调用 `Wan2.1/generate.py`。
+
+原因：Wan 原格式需要官方推理代码 `sys.path.insert`，在 Docker 容器内进程隔离更稳定，且方便强制 kill 超时进程。
+
+```python
+# ✅ 正确：subprocess 方式
+proc = await asyncio.create_subprocess_exec(
+    "python", "/app/models/Wan2.1-T2V-1.3B/generate.py",
+    "--prompt", full_prompt, "--output", str(tmp_path), ...,
+)
+try:
+    await asyncio.wait_for(proc.wait(), timeout=600)
+except asyncio.TimeoutError:
+    proc.kill()
+    raise
+
+# ❌ 错误：直接 import（在 Docker 内路径不可控）
+# from wan.text2video import WanT2V
+```
 
 必须实现的保障机制：
-1. `asyncio.Semaphore(1)` 强制串行
-2. 超时保护（600s）+ 强制 kill
+1. `asyncio.Semaphore(1)` 强制串行（防止两个 shot 同时推理）
+2. 超时保护（600s）+ 强制 `proc.kill()`
 3. 临时文件 + 原子写入（`.tmp.mp4` → `os.replace`）
-4. 输出验证（ffprobe 检查时长）
-5. 进程清理（finally 块确保释放锁）
+4. 输出验证（ffprobe 检查时长 > 0）
+5. `finally` 块确保信号量释放
 
 ### 4.5 进程守护（每个服务的 `main.py` 必须实现）
 
@@ -432,5 +465,24 @@ D:/work/novel-comic-drama-2/
 ---
 
 *本文档由 Sisyphus Agent 创建*  
-*最后更新：2026-04-18*  
+*最后更新：2026-04-19*  
 *状态：等待编码 Agent 接手*
+
+---
+
+## 附：Phase 2 并行策略
+
+```
+Phase 2 推荐执行顺序（最大化并行）：
+
+  并行组 A（无 GPU 依赖，可同时开发）：
+    feature/storyboard-service
+    feature/tts-service
+    feature/assembly-service
+
+  串行组 B（有 GPU/设计依赖，按序开发）：
+    feature/image-service     ← 先完成，ModelManager 是模板
+    feature/video-service     ← 参考 image-service 的 ModelManager 设计
+
+Phase 3 等待 Phase 2 主要接口稳定后启动（不必等全部完成）
+```

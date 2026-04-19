@@ -276,7 +276,114 @@
 
 ---
 
-## 4. 并行执行策略
+## 4. Git-Flow 分支策略
+
+本项目采用 **Git-Flow** 规范进行分支管理。
+
+### 分支定义
+
+| 分支 | 用途 | 规则 |
+|------|------|------|
+| `master` | 生产环境 | 仅存放稳定、可运行的版本。每次合并必须有明确的版本标签 |
+| `develop` | 开发集成 | 从 `master` 切出。所有 feature 分支合并到此。Phase 1-3 完成后，此分支包含完整可运行代码 |
+| `feature/*` | 功能开发 | 从 `develop` 切出。每个 Phase 或独立服务一个 feature 分支 |
+| `release/*` | 发布准备 | 从 `develop` 切出。仅用于 Phase 4 集成测试和用户审核阶段 |
+| `hotfix/*` | 紧急修复 | 从 `master` 切出。生产环境 bug 修复 |
+
+### 开发流程
+
+```
+master (稳定文档)
+  │
+  ├── checkout develop
+  │     │
+  │     ├── checkout feature/phase-1-skeleton
+  │     │     │
+  │     │     └── 开发 Phase 1
+  │     │     │
+  │     │     └── merge → develop
+  │     │
+  │     ├── checkout feature/storyboard-service
+  │     │     │
+  │     │     └── 开发 storyboard-service
+  │     │     │
+  │     │     └── merge → develop
+  │     │
+  │     ├── checkout feature/tts-service
+  │     │     │
+  │     │     └── 开发 tts-service
+  │     │     │
+  │     │     └── merge → develop
+  │     │
+  │     ├── checkout feature/image-service
+  │     │     │
+  │     │     └── 开发 image-service
+  │     │     │
+  │     │     └── merge → develop
+  │     │
+  │     ├── checkout feature/video-service
+  │     │     │
+  │     │     └── 开发 video-service
+  │     │     │
+  │     │     └── merge → develop
+  │     │
+  │     ├── checkout feature/assembly-service
+  │     │     │
+  │     │     └── 开发 assembly-service
+  │     │     │
+  │     │     └── merge → develop
+  │     │
+  │     ├── checkout feature/webui-frontend
+  │     │     │
+  │     │     └── 开发 Next.js 前端
+  │     │     │
+  │     │     └── merge → develop
+  │     │
+  │     └── 【Phase 1-3 完成，develop 包含完整代码】
+  │           │
+  │           └── checkout release/v1.0-mock
+  │                 │
+  │                 └── Mock 集成测试 (Phase 4.1-4.3)
+  │                 │
+  │                 └── 用户审核
+  │                 │
+  │                 ├── 【审核通过】merge → master (tag v1.0)
+  │                 │
+  │                 └── 【需修改】checkout fix/xxx from release → 修改 → 重新审核
+```
+
+### Feature 分支命名规范
+
+```
+feature/phase-1-skeleton          # Phase 1: 项目骨架
+feature/storyboard-service        # storyboard-service
+feature/tts-service               # tts-service
+feature/image-service             # image-service
+feature/video-service             # video-service
+feature/assembly-service          # assembly-service
+feature/webui-frontend            # Next.js 前端
+feature/shared-modules            # job_manager + model_manager
+```
+
+### Commit Message 规范
+
+```
+feat: add storyboard-service with KimiProvider
+feat: implement FluxLocalProvider with 4-bit quantization
+fix: handle CUDA OOM in image-service
+refactor: extract shared ModelManager
+docs: update HANDOFF with progress
+test: add mock fixtures for tts-service
+```
+
+### 当前状态
+
+- `master` 分支：已完成所有设计文档（当前状态）
+- **下一步**：从 `master` 创建 `develop` 分支，所有编码工作从 `develop` 切出 feature 分支
+
+---
+
+## 5. 并行执行策略
 
 ### 可并行任务
 
@@ -328,7 +435,7 @@ Phase 1: [1.1] → [1.2 + 1.3 + 1.4]
 
 ---
 
-## 5. Handoff 机制
+## 6. Handoff 机制
 
 ### 每个任务完成后的 Handoff 要求
 
@@ -362,7 +469,7 @@ Phase 1: [1.1] → [1.2 + 1.3 + 1.4]
 
 ---
 
-## 6. 风险管理
+## 7. 风险管理
 
 | 风险 | 影响 | 缓解措施 |
 |------|------|----------|
@@ -375,7 +482,7 @@ Phase 1: [1.1] → [1.2 + 1.3 + 1.4]
 
 ---
 
-## 7. 技术决策清单
+## 8. 技术决策清单
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
@@ -390,7 +497,7 @@ Phase 1: [1.1] → [1.2 + 1.3 + 1.4]
 
 ---
 
-## 8. 附录
+## 9. 附录
 
 ### A. MVP 参考代码位置
 
@@ -431,7 +538,7 @@ D:\work\novel-comic-drama\models\
 
 ---
 
-## 9. 用户确认记录
+## 10. 用户确认记录
 
 ### 2026-04-18 用户确认（通过对话）
 
@@ -446,6 +553,7 @@ D:\work\novel-comic-drama\models\
 - 每个任务完成后更新 HANDOFF.md
 - 另一 Agent 工作完成后需提供交接文档
 - Phase 1-3 完成后必须向用户汇报进展
+- **使用 Git-Flow 分支规范**：所有编码工作在 `feature/*` 分支进行，合并到 `develop` 分支
 
 ---
 

@@ -2,8 +2,8 @@
 
 > **生成时间**：2026-04-18  
 > **生成者**：Sisyphus Agent  
-> **状态**：文档阶段完成，等待 Code Agent 接手编码  
-> **目标读者**：另一位 Claude Code Agent（编码执行者）
+> **状态**：Phase 1-3 开发中（由另一 Agent 执行）  
+> **目标读者**：执行编码的 Agent
 
 ---
 
@@ -22,63 +22,253 @@
 
 ### ✅ 已完成（文档层面）
 
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| PRD | ✅ 完整 | `docs/product/prd/v1.0-core-mvp.md` — 功能范围明确 |
-| 数据模型 | ✅ 完整 | `docs/technical/design/00-data-model.md` — Shot/Storyboard/ProjectState/API契约 |
-| 服务层设计 | ✅ 完整 | `01-services-overview.md` — 通用规范、JobManager、ModelManager、Provider、进程守护 |
-| storyboard-service | ✅ 完整 | `02-service-storyboard.md` — Kimi API → 分镜 JSON |
-| image-service | ✅ 完整 | `03-service-image.md` — FLUX.1-dev → PNG |
-| tts-service | ✅ 完整 | `04-service-tts.md` — edge-tts → WAV |
-| video-service | ✅ 完整 | `05-service-video.md` — Wan2.1 → MP4（含 subprocess 方式说明） |
-| assembly-service | ✅ 完整 | `06-service-assembly.md` — FFmpeg → final.mp4 + SRT |
-| WebUI 设计 | ✅ 完整 | `07-webui-design.md` — 750行，页面/API/组件/状态管理 |
-| 技术架构 | ✅ 完整 | `001-tech-stack.md` — 技术选型、端口设计 |
-| 进程守护 | ✅ 已补充 | `01-services-overview.md` 第7节 — Docker/Python/业务/健康检查多层保障 |
+| 模块 | 文档路径 | 状态 |
+|------|----------|------|
+| PRD | `docs/product/prd/v1.0-core-mvp.md` | 完整 |
+| 数据模型 | `docs/technical/design/00-data-model.md` | 完整 |
+| 服务层设计 | `docs/technical/design/01-services-overview.md` | 完整 |
+| storyboard-service | `docs/technical/design/02-service-storyboard.md` | 完整 |
+| image-service | `docs/technical/design/03-service-image.md` | 完整 |
+| tts-service | `docs/technical/design/04-service-tts.md` | 完整 |
+| video-service | `docs/technical/design/05-service-video.md` | 完整 |
+| assembly-service | `docs/technical/design/06-service-assembly.md` | 完整 |
+| WebUI 设计 | `docs/technical/design/07-webui-design.md` | 完整（750行）|
+| 技术架构 | `docs/technical/architecture/001-tech-stack.md` | 完整 |
+| 开发计划 | `docs/development-plan.md` | 完整（含用户确认）|
+| UI 调研 | `docs/research/ui-design/` | 完整 |
+| AI 服务调研 | `docs/research/ai-services/` | 完整 |
 
-### ⚠️ 标记为"待补充"的文档
+### 🚧 进行中（编码阶段）
 
-以下文档已标记为"待补充"，**编码阶段暂不依赖**：
+**你的任务**：完成 Phase 1-3 的编码工作
 
-- `docs/technical/design/api-gateway.md` — v1.0 无需独立网关
-- `docs/technical/design/data-model.md` — 与 `00-data-model.md` 重复
-- `docs/technical/architecture/002-auth-strategy.md` — v1.0 无需认证
-- `docs/qa/*` — 测试计划待开发阶段补充
-- `docs/runbooks/*` — 运维手册待部署阶段补充
-- `docs/technical/api/*` — API 文档已分散在各服务设计中
-- `docs/product/features/user-auth.md` — v1.0 无此功能
+| Phase | 内容 | 范围 |
+|-------|------|------|
+| **Phase 1** | 项目骨架 + 通用模块 | `services/` 目录结构、`shared/job_manager.py`、`shared/model_manager.py`、`.env.example` |
+| **Phase 2** | 5个后端服务 | storyboard / image / tts / video / assembly |
+| **Phase 3** | Next.js 前端 | 项目初始化、API Routes、Pipeline Wizard、各步骤组件 |
 
-### ❌ 完全缺失（编码阶段需创建）
+### ⏳ 暂停（等待用户审核）
 
-| 文件 | 说明 |
-|------|------|
-| `services/` 目录 | 5个 FastAPI 服务代码 |
-| `apps/web/` 目录 | Next.js 前端代码 |
-| `infra/docker-compose.yml` | 当前只有 PostgreSQL 模板，需重写 |
-| `.env.example` | 环境变量模板（当前只有空文件） |
+| Phase | 内容 | 说明 |
+|-------|------|------|
+| **Phase 4** | 集成与部署 | **必须在 Phase 1-3 完成并经用户确认后，方可启动** |
 
 ---
 
-## 3. 关键设计决策（编码前必读）
+## 3. Git-Flow 分支规范（必须遵守）
 
-### 3.1 数据模型（唯一权威来源：`00-data-model.md`）
+本项目采用 **Git-Flow** 规范进行分支管理。
 
-**Shot 结构**：
-```json
-{
-  "shot_id": "E01_001",
-  "duration": 4.0,
-  "shot_type": "medium",           // 枚举: wide/medium/close_up/extreme_close_up/over_shoulder
-  "camera_move": "static",         // 枚举: static/pan/zoom_in/zoom_out/dolly/tracking
-  "scene": "...",
-  "characters": ["萧炎"],
-  "emotion": "determined",
-  "action": "旁白文本（中文）",
-  "dialogue": null,                // 有台词时为字符串，无则为 null
-  "image_prompt": "英文提示词（FLUX）",
-  "video_prompt": "英文提示词（Wan）"
-}
+### 分支定义
+
+| 分支 | 用途 | 规则 |
+|------|------|------|
+| `master` | 生产环境 | **不要直接提交**。仅存放稳定版本 |
+| `develop` | 开发集成 | **所有编码工作的基础分支**。从 `master` 切出 |
+| `feature/*` | 功能开发 | **从 `develop` 切出**。每个 Phase 或独立服务一个分支 |
+
+### 当前状态
+
+- `master` 分支：已完成所有设计文档
+- **下一步**：创建 `develop` 分支（从 `master` 切出），然后从 `develop` 切出各个 `feature/*` 分支
+
+### 你的工作流程
+
+```bash
+# 1. 创建 develop 分支（只需执行一次）
+git checkout -b develop master
+git push -u origin develop
+
+# 2. 开始每个任务前，从 develop 创建 feature 分支
+git checkout develop
+git pull origin develop
+git checkout -b feature/phase-1-skeleton
+
+# 3. 开发完成后，合并回 develop
+git checkout develop
+git merge --no-ff feature/phase-1-skeleton
+git push origin develop
+
+# 4. 删除已合并的 feature 分支
+git branch -d feature/phase-1-skeleton
 ```
+
+### Feature 分支命名
+
+```
+feature/phase-1-skeleton          # Phase 1: 项目骨架 + 通用模块
+feature/storyboard-service        # storyboard-service
+feature/tts-service               # tts-service
+feature/image-service             # image-service
+feature/video-service             # video-service
+feature/assembly-service          # assembly-service
+feature/webui-frontend            # Next.js 前端
+```
+
+### Commit Message 规范
+
+```
+feat: add storyboard-service with KimiProvider
+feat: implement FluxLocalProvider with 4-bit quantization
+fix: handle CUDA OOM in image-service
+refactor: extract shared ModelManager
+docs: update HANDOFF with progress
+```
+
+### 重要规则
+
+- ✅ **每个 feature 完成后立即合并到 develop**
+- ✅ **定期 push develop 到远程**（至少每天一次）
+- ✅ **不要在 feature 分支长期停留**
+- ❌ **不要直接修改 master 分支**
+- ❌ **不要在 feature 分支合并其他 feature 分支**
+
+---
+
+## 4. 你的任务清单
+
+### Phase 1: 项目骨架与通用模块（~7小时）
+
+**任务 1.1**：创建 `services/` 目录结构
+```
+services/
+├── storyboard/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── main.py
+│   └── providers/
+│       ├── __init__.py
+│       ├── base.py
+│       └── kimi.py
+├── image/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── main.py
+│   └── providers/
+│       ├── __init__.py
+│       ├── base.py
+│       └── flux_local.py
+├── tts/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── main.py
+│   └── providers/
+│       ├── __init__.py
+│       ├── base.py
+│       └── edge_tts.py
+├── video/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── main.py
+│   └── providers/
+│       ├── __init__.py
+│       ├── base.py
+│       └── wan_local.py
+├── assembly/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── main.py
+│   ├── assembler.py
+│   └── srt_generator.py
+└── shared/
+    ├── __init__.py
+    ├── job_manager.py
+    └── model_manager.py
+```
+
+**任务 1.2**：实现 `shared/job_manager.py`
+- 通用 Job 生命周期管理（所有5个服务共用）
+- Job 状态机：queued → in_progress → completed/failed/cancelled
+- SSE 事件流：progress / complete / error
+- 内存管理：JobRecord 存储、TTL 清理
+- 设计参考：`docs/technical/design/01-services-overview.md` 第2节
+
+**任务 1.3**：实现 `shared/model_manager.py`
+- `ModelManager`：GPU 服务通用（image-service）
+  - 按需加载、TTL 自动卸载、强制卸载
+- `VideoModelManager`：video-service 专用
+  - subprocess 进程锁管理（不是模型加载）
+- 设计参考：`docs/technical/design/01-services-overview.md` 第3节
+
+**任务 1.4**：创建 `.env.example`
+- 所有服务的环境变量模板
+- 模型路径、API Keys、端口配置
+
+### Phase 2: 后端服务（~27小时）
+
+**任务 2.1**：storyboard-service（端口 8001）
+- FastAPI 骨架 + Dockerfile
+- KimiProvider：调用 Kimi API 生成 storyboard.json
+- 集成 JobManager
+- MVP参考：`D:/work/novel-comic-drama-2/storyboard_generator.py`
+- 设计参考：`docs/technical/design/02-service-storyboard.md`
+
+**任务 2.2**：tts-service（端口 8003）
+- FastAPI 骨架 + Dockerfile
+- EdgeTTSProvider：edge-tts 调用，旁白/对话双轨
+- 生成 `audio_durations.json`
+- 集成 JobManager，断点续传
+- MVP参考：`D:/work/novel-comic-drama-2/generate_audio.py`
+- 设计参考：`docs/technical/design/04-service-tts.md`
+
+**任务 2.3**：image-service（端口 8002）
+- FastAPI 骨架 + Dockerfile（GPU镜像）
+- FluxLocalProvider：4-bit 量化加载 + 单张生成
+- 集成 ModelManager（按需加载、TTL卸载）
+- 断点续传
+- MVP参考：`D:/work/novel-comic-drama-2/batch_generate_flux.py`
+- 设计参考：`docs/technical/design/03-service-image.md`
+
+**任务 2.4**：video-service（端口 8004）
+- FastAPI 骨架 + Dockerfile（GPU镜像）
+- WanSubprocessProvider：subprocess 调用 Wan2.1/generate.py
+  - **关键**：实现 `_generate_lock` 信号量（防止并发）
+  - **关键**：超时保护（600s）+ 强制 kill
+  - **关键**：临时文件 + 原子写入
+  - **关键**：FFmpeg 冻结帧补齐（TTS 时长 > 默认时长时）
+- 集成 VideoModelManager
+- 断点续传
+- MVP参考：`D:/work/novel-comic-drama-2/batch_generate_wan.py`
+- 设计参考：`docs/technical/design/05-service-video.md`
+
+**任务 2.5**：assembly-service（端口 8005）
+- FastAPI 骨架 + Dockerfile
+- FFmpeg 编排：素材验证 → 时长对齐 → concat → 混音 → 合并
+- SRT 字幕生成
+- 集成 JobManager
+- MVP参考：`D:/work/novel-comic-drama-2/video_assembler.py`
+- 设计参考：`docs/technical/design/06-service-assembly.md`
+
+### Phase 3: 前端开发（~22小时）
+
+**任务 3.1**：Next.js 项目初始化
+- `npx shadcn@latest init`
+- 安装依赖：shadcn 组件 + SWR
+- 全局配置：Tailwind 主题 + layout.tsx
+
+**任务 3.2**：API Routes
+- `GET/POST/PATCH/DELETE /api/projects` — 项目 CRUD
+- `POST /api/pipeline/[id]/[step]/start` — Pipeline 编排
+- `GET /api/pipeline/[id]/[step]/events` — SSE 代理
+- `GET /api/projects/[id]/files/[...path]` — 文件代理
+
+**任务 3.3**：页面与组件
+- `/projects` — 项目列表页
+- `/projects/[id]` — Pipeline Wizard（5步骤）
+  - StepCard 通用组件
+  - StoryboardStep / ImageStep / TTSStep / VideoStep / AssemblyStep
+  - AutoModeToggle
+
+---
+
+## 5. 关键设计决策（编码时必须遵守）
+
+### 4.1 数据模型（唯一权威来源：`00-data-model.md`）
+
+**Shot 枚举值**：
+- `shot_type`: `wide` / `medium` / `close_up` / `extreme_close_up` / `over_shoulder`
+- `camera_move`: `static` / `pan` / `zoom_in` / `zoom_out` / `dolly` / `tracking`
 
 **Storyboard 结构**：
 ```json
@@ -90,9 +280,7 @@
 }
 ```
 
-> ⚠️ **注意**：MVP 代码 `novel-comic-drama-2/storyboard_generator.py` 生成的 JSON 使用旧枚举值（`close-up`/`tracking`），**编码时需修改为新的枚举值**（`close_up`/`tracking`）。
-
-### 3.2 端口与网络设计
+### 4.2 端口与网络
 
 ```
 服务容器内部统一监听: 8000
@@ -106,161 +294,74 @@
 Docker 内部网络: 服务名:8000（如 http://image-service:8000）
 ```
 
-### 3.3 GPU 串行约束
+### 4.3 GPU 串行约束
 
 ```
 image-service 和 video-service 不能同时运行（共享 12GB VRAM）
-编排顺序:
-  storyboard → (image + tts 并行) → video → assembly
+编排顺序: storyboard → (image + tts 并行) → video → assembly
 
-切换 GPU 服务前必须调用 POST /model/unload:
-  image 完成后 → POST image-service/model/unload
-  video 完成后 → POST video-service/model/unload
+切换 GPU 服务前必须调用 POST /model/unload
 ```
 
-### 3.4 Video-Service 采用 Subprocess 方式
+### 4.4 Video-Service Subprocess 方式
 
-**关键决策**：video-service 不直接 import Wan 模型，而是通过 **subprocess 调用** `Wan2.1/generate.py`。
+**关键决策**：video-service 不直接 import Wan 模型，而是通过 subprocess 调用 `Wan2.1/generate.py`。
 
-原因：
-- Wan 原格式推理代码依赖复杂的环境配置，Docker 内直接 import 风险高
-- 与 MVP 验证过的方案一致
+必须实现的保障机制：
+1. `asyncio.Semaphore(1)` 强制串行
+2. 超时保护（600s）+ 强制 kill
+3. 临时文件 + 原子写入（`.tmp.mp4` → `os.replace`）
+4. 输出验证（ffprobe 检查时长）
+5. 进程清理（finally 块确保释放锁）
 
-影响：
-- `model_manager.py` 简化为**进程锁管理器**（不是模型加载器）
-- SSE 无法提供逐帧进度，采用**阶段式进度**（"启动中..." → "完成"）
-- subprocess 超时保护 + 强制 kill 机制必须实现
-- 详见 `05-service-video.md` 第 10 节
+### 4.5 进程守护（每个服务的 `main.py` 必须实现）
 
-### 3.5 BGM 不在 v1.0 范围内
-
-- `bgm_mood` 字段已从 Shot 模型移除
-- assembly-service 中不处理 BGM 轨道
-- 混音只包含：旁白轨 + 台词轨
-
-### 3.6 进程守护策略
-
-编码时必须在每个服务的 `main.py` 中实现：
 1. **全局异常捕获 middleware** — 防止未处理异常终止进程
-2. **SIGTERM 优雅关闭** — Docker stop 时清理资源（卸载模型、取消 Job、kill subprocess）
-3. **健康检查** — `/health` 只验证 FastAPI 进程正常（不等待模型加载）
+2. **SIGTERM 优雅关闭** — Docker stop 时清理资源
+3. **健康检查** — `/health` 只验证 FastAPI 进程正常
 4. **Docker restart policy** — `unless-stopped`
-5. **资源限制** — memory limit + shm_size
 
-详见 `01-services-overview.md` 第 7 节。
+详见 `docs/technical/design/01-services-overview.md` 第7节。
+
+### 4.6 Mock 模式
+
+每个服务应支持 `MOCK_MODE=true` 环境变量：
+- 返回预置的 fixture 数据，不调用真实模型
+- Mock Provider 放在 `providers/mock.py`
+- 便于前端联调和流程验证
 
 ---
 
-## 4. MVP 参考代码位置
+## 6. MVP 参考代码
 
 **不要照抄**，但可参考实现逻辑：
 
-| 服务 | 参考文件 | 说明 |
-|------|----------|------|
-| storyboard | `D:/work/novel-comic-drama-2/storyboard_generator.py` | Kimi API 调用逻辑、Prompt 模板 |
-| image | `D:/work/novel-comic-drama-2/batch_generate_flux.py` | FLUX 加载、4-bit 量化、CPU offload |
-| tts | `D:/work/novel-comic-drama-2/generate_audio.py` | edge-tts 调用、双层音轨 |
-| video | `D:/work/novel-comic-drama-2/batch_generate_wan.py` | Wan subprocess 调用方式 |
-| assembly | `D:/work/novel-comic-drama-2/video_assembler.py` | FFmpeg 拼接、混音、SRT 生成 |
+```
+D:/work/novel-comic-drama-2/
+├── storyboard_generator.py      → 2.1 storyboard-service
+├── batch_generate_flux.py       → 2.3 image-service
+├── generate_audio.py            → 2.2 tts-service
+├── batch_generate_wan.py        → 2.4 video-service
+└── video_assembler.py           → 2.5 assembly-service
+```
 
 **模型文件位置**：`D:\work\novel-comic-drama\models`
-- 需要挂载到 Docker 容器内 `/app/models/`
-- 用户会自行配置 Docker 挂载
+- FLUX.1-dev/ → 挂载到 `/app/models/FLUX.1-dev/`
+- Wan2.1-T2V-1.3B/ → 挂载到 `/app/models/Wan2.1-T2V-1.3B/`
 
 ---
 
-## 5. 编码任务优先级建议
-
-### P0 — 必须先完成（阻塞后续工作）
-
-1. **通用模块实现**
-   - `services/shared/job_manager.py` — 所有服务共用
-   - `services/shared/model_manager.py` — GPU 服务使用
-
-2. **docker-compose.yml**
-   - 5个服务 + Next.js 的完整编排
-   - 端口映射、模型挂载、GPU 访问、健康检查
-
-### P1 — 核心服务
-
-3. **storyboard-service** — 最简单，无 GPU，可先验证 Job 模式
-4. **image-service** — 需要 GPU，验证 ModelManager
-5. **tts-service** — 纯 CPU，可与 image 并行验证
-6. **video-service** — 最复杂，subprocess 方式
-7. **assembly-service** — FFmpeg 编排
-
-### P2 — Web UI
-
-8. **Next.js 项目骨架** — 安装依赖、配置 Tailwind + shadcn/ui
-9. **API Routes** — 项目管理 + Pipeline 编排
-10. **前端页面** — 项目列表 + Pipeline Wizard
-
-### P3 —  polish
-
-11. **E2E 测试** — Playwright
-12. **空文档补充** — 测试计划、部署手册等
-
----
-
-## 6. 已知陷阱与注意事项
-
-### ❌ 不要做的事
+## 7. 已知陷阱
 
 | 陷阱 | 后果 | 正确做法 |
 |------|------|----------|
 | image/video 同时运行 | CUDA OOM，容器崩溃 | 严格串行，编排器控制 |
 | video-service 直接 import Wan | Docker 内 import 路径问题 | 使用 subprocess 方式 |
-| 忽略 subprocess 超时 | 服务假死，无法处理新请求 | 必须实现 timeout + kill |
-| health check 等待模型加载 | 容器启动时间极长，被 Docker 判定 unhealthy | `/health` 只检查 FastAPI 进程 |
+| 忽略 subprocess 超时 | 服务假死 | 必须实现 timeout + kill |
+| health check 等待模型加载 | 容器启动时间极长 | `/health` 只检查 FastAPI 进程 |
 | 使用 xfade 拼接视频 | 多片段时丢内容 | 使用 concat demuxer |
 | 视频固定 4 秒 | TTS 被截断 | 自适应延长：max(声明时长, TTS时长+0.5s) |
-| 忽略 Windows 路径反斜杠 | FFmpeg 解析错误 | 使用 `as_posix()` + `replace(':','\\:')` |
-
-### ⚠️ 需要特别注意
-
-1. **PyTorch 版本**：必须使用 `2.7.0+cu128`，唯一支持 Blackwell (sm_120) 的版本
-2. **Wan 格式**：必须使用**原格式**（16.6GB），不是 diffusers 格式（27GB，32GB RAM 无法加载）
-3. **FFmpeg 格式**：输出必须加 `-pix_fmt yuv420p`，否则部分播放器不兼容
-4. **edge-tts 输出**：扩展名 `.wav` 但实际是 MP3 格式，FFmpeg 可直接处理
-5. **断点续传**：每个 shot 处理前检查目标文件是否存在且大小 > 0
-
----
-
-## 7. 与 Sisyphus Agent 的协作方式
-
-### 7.1 沟通渠道
-
-**唯一沟通方式**：通过 Handoff 文档 + Git commit message。
-
-> ⚠️ **我们没有实时沟通渠道**。所有信息必须通过文档或代码注释传递。
-
-### 7.2 交接规则
-
-| 场景 | 操作 |
-|------|------|
-| **完成一个模块** | 更新本 Handoff 文档的"当前状态"章节，标记为 ✅ |
-| **发现文档问题** | 修改对应文档，在 Handoff 中记录变更 |
-| **设计决策变更** | 修改对应设计文档 + 更新 Handoff "关键决策"章节 |
-| **遇到阻塞问题** | 在 Handoff 末尾添加"待讨论问题"列表 |
-| **完成全部编码** | 更新 Handoff 状态为"编码完成"，列出已验证/未验证项 |
-
-### 7.3 Handoff 文档位置
-
-```
-D:\work\novel-workflow\HANDOFF.md   ← 本文件
-```
-
-**更新方式**：直接编辑此文件，Git commit 时说明更新内容。
-
-### 7.4 信息完整性检查清单
-
-在交接时，确保以下信息已传递：
-
-- [ ] 已完成的工作列表
-- [ ] 已修改的设计文档列表
-- [ ] 新发现的问题或陷阱
-- [ ] 测试验证结果（如有）
-- [ ] 依赖项变更（新增的包、工具等）
+| 忽略 Windows 路径反斜杠 | FFmpeg 解析错误 | 使用 `as_posix()` |
 
 ---
 
@@ -279,19 +380,57 @@ D:\work\novel-workflow\HANDOFF.md   ← 本文件
 
 ---
 
-## 9. 待讨论问题（编码阶段可能遇到）
+## 9. 交接要求
 
-> 此列表由编码 Agent 动态更新
+### 你必须在完成后更新此文档
 
-| # | 问题 | 状态 | 备注 |
-|---|------|------|------|
-| 1 | Docker 在 Windows 上的 GPU 支持（WSL2 vs Hyper-V）| 待验证 | 用户需确认 Docker Desktop 配置 |
-| 2 | Wan subprocess 在 Docker 内的 Python 环境路径 | 待验证 | 需测试 `Wan2.1/generate.py` 能否在容器内运行 |
-| 3 | Next.js 在 Docker 内访问宿主机 `projects/` 目录 | 待验证 | 需测试 volume 挂载 |
-| 4 | FLUX 4-bit 量化在 Docker 内的兼容性 | 待验证 | 依赖 bitsandbytes + CUDA 12.8 |
+在 `HANDOFF.md` 的"当前状态"章节更新，格式：
+
+```markdown
+## 当前状态（实时更新）
+
+### ✅ 已完成
+- [2.1] storyboard-service — 2026-04-XX — Agent-Name
+- [2.2] tts-service — 2026-04-XX — Agent-Name
+- ...
+
+### 🚧 进行中
+- [3.3] Pipeline Wizard — Agent-Name
+
+### ⏳ 待开始
+- [2.4] video-service — 等待 ...
+```
+
+### 必须记录的信息
+1. **已完成的工作**：任务ID、完成时间、关键变更
+2. **新增/修改的文件**：文件路径列表
+3. **已知问题**：遇到的坑、未解决的 TODO、临时方案
+4. **测试验证结果**：通过的 QA 检查项、失败项及原因
+5. **下一步建议**：接下来应该做什么
+
+### 提交代码
+- 每个 Phase 完成后 git commit
+- 最终完成后 push 到远程仓库
+- 更新此 HANDOFF.md 后再次 commit
+
+---
+
+## 10. 限制与边界
+
+### 你**不应该**做的事
+- ❌ **不要启动 Phase 4**（集成与部署）— 必须在 Phase 1-3 完成并经用户确认后，由 Sisyphus Agent 或用户决定
+- ❌ **不要修改设计文档**（`docs/technical/design/*.md`）— 如有发现文档错误，记录在 HANDOFF.md 中
+- ❌ **不要删除或修改 `.env.example`** — 如有新增环境变量，追加到文件末尾
+- ❌ **不要提交真实 API Key** — 使用占位符
+
+### 你**应该**做的事
+- ✅ 并行开发独立任务（如同时写 storyboard-service 和 tts-service）
+- ✅ 使用子 Agent 加速（如让子 Agent 写前端组件）
+- ✅ 每个服务完成后立即测试（手动 QA）
+- ✅ 遇到设计文档未覆盖的问题，做合理决策并记录在 HANDOFF.md
 
 ---
 
 *本文档由 Sisyphus Agent 创建*  
 *最后更新：2026-04-18*  
-*下一步：等待 Code Agent 确认接收，开始编码阶段*
+*状态：等待编码 Agent 接手*

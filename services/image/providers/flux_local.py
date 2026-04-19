@@ -20,28 +20,66 @@ class FluxLocalProvider(ImageProvider):
 
     async def load_model(self) -> None:
         import torch
-        from diffusers import FluxPipeline
-        from transformers import BitsAndBytesConfig
+        from diffusers import FluxPipeline, FluxTransformer2DModel, BitsAndBytesConfig
+        from transformers import T5EncoderModel
 
         logger.info(f"Loading FLUX model from {MODEL_PATH}...")
-        nf4_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
-        )
-        loop = asyncio.get_event_loop()
-        pipe = await loop.run_in_executor(
-            None,
-            lambda: FluxPipeline.from_pretrained(
+
+        def _load():
+            # Step 1: 4-bit 量化 transformer（将 23GB 压至 ~6GB）
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_use_double_quant=True,
+            )
+            logger.info("Loading transformer with 4-bit NF4 quantization...")
+            transformer = FluxTransformer2DModel.from_pretrained(
                 MODEL_PATH,
-                quantization_config=nf4_config,
-                torch_dtype=torch.bfloat16,
-            ),
-        )
-        pipe.enable_model_cpu_offload()
-        pipe.vae.enable_slicing()
-        pipe.vae.enable_tiling()
-        self._pipe = pipe
+                subfolder="transformer",
+                quantization_config=bnb_config,
+                torch_dtype=torch.float16,
+                local_files_only=True,
+            )
+
+            # Step 2: T5 text encoder FP16（由 cpu_offload 管理）
+            logger.info("Loading T5 text encoder (FP16)...")
+            text_encoder_2 = T5EncoderModel.from_pretrained(
+                MODEL_PATH,
+                subfolder="text_encoder_2",
+                torch_dtype=torch.float16,
+                local_files_only=True,
+                low_cpu_mem_usage=True,
+            )
+
+            # Step 3: 组装 pipeline
+            logger.info("Assembling FluxPipeline...")
+            pipe = FluxPipeline.from_pretrained(
+                MODEL_PATH,
+                transformer=transformer,
+                text_encoder_2=text_encoder_2,
+                torch_dtype=torch.float16,
+                local_files_only=True,
+            )
+            pipe.enable_model_cpu_offload()
+            pipe.vae.enable_slicing()
+            pipe.vae.enable_tiling()
+
+            # torch.compile for Blackwell (sm_120) on Linux Docker
+            import sys
+            if sys.platform != "win32":
+                cap = torch.cuda.get_device_capability()
+                if cap[0] >= 8:
+                    logger.info(f"Enabling torch.compile (sm_{cap[0]}{cap[1]})...")
+                    pipe.transformer = torch.compile(
+                        pipe.transformer,
+                        mode="max-autotune",
+                        fullgraph=False,
+                    )
+            return pipe
+
+        loop = asyncio.get_event_loop()
+        self._pipe = await loop.run_in_executor(None, _load)
         logger.info("FLUX model loaded")
 
     async def unload_model(self) -> None:
@@ -61,11 +99,17 @@ class FluxLocalProvider(ImageProvider):
         await loop.run_in_executor(None, self._sync_generate, full_prompt, output_path, config)
 
     def _sync_generate(self, prompt: str, output_path: str, config: dict):
+        import torch
+        seed = config.get("seed", 42)
+        generator = torch.Generator("cuda").manual_seed(seed)
         image = self._pipe(
             prompt=prompt,
             width=config.get("width", 768),
             height=config.get("height", 768),
-            num_inference_steps=config.get("num_inference_steps", 28),
+            num_inference_steps=config.get("num_inference_steps", 15),
             guidance_scale=config.get("guidance_scale", 3.5),
+            max_sequence_length=config.get("max_sequence_length", 256),
+            generator=generator,
         ).images[0]
         image.save(output_path)
+        torch.cuda.empty_cache()

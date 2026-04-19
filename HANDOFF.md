@@ -512,6 +512,232 @@ D:/work/novel-comic-drama-2/
 
 ---
 
+## 当前完整状态 — 2026-04-19（CLAUDE → OPENCODE 交接）
+
+> **交接自**：Claude Sonnet 4.6  
+> **交接至**：OPENCODE  
+> **工作目录**：`D:\work\novel-workflow`
+
+---
+
+### 一、整体开发进度（全貌）
+
+**所有代码已开发完成，Docker 服务已构建并运行。当前唯一阻塞点是 image-service 的 GPU 模型加载崩溃。**
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| Phase 1 | shared 公共模块（JobManager、ModelManager）| ✅ 完成并已部署 |
+| Phase 2 | 5 个后端 FastAPI 微服务 + docker-compose | ✅ 完成并已运行 |
+| Phase 3 | Next.js 前端（App Router + shadcn/ui）| ✅ 完成（未在 docker-compose 中，本地 `npm run dev`）|
+| Phase 4 | GPU 真实推理测试 | 🔴 **image-service 崩溃，阻塞中** |
+
+---
+
+### 二、当前运行状态（2026-04-19 已验证）
+
+#### Docker 服务（全部运行中）
+
+```
+容器名                              宿主机端口   状态
+novel-workflow-storyboard-service-1   8001     ✅ healthy
+novel-workflow-image-service-1        8002     ✅ healthy（模型未加载）
+novel-workflow-tts-service-1          8003     ✅ healthy
+novel-workflow-video-service-1        8004     ✅ healthy（模型未加载）
+novel-workflow-assembly-service-1     8005     ✅ healthy（ffmpeg 可用）
+```
+
+注意：**Web 前端未在 docker-compose 中**，需单独启动：
+```bash
+cd apps/web && npm install && npm run dev   # http://localhost:3000
+```
+
+#### .env 配置（`D:\work\novel-workflow\.env`）
+
+```env
+IMAGE_PROVIDER=flux_local      # 真实 GPU 推理（非 mock）
+MOCK_MODE=false
+FLUX_MODEL_PATH=/app/models/FLUX.1-dev
+VIDEO_PROVIDER=wan_local
+WAN_MODEL_PATH=/app/models/Wan2.1-T2V-1.3B
+KIMI_API_KEY=sk-kimi-fchXfQ...  # 已配置
+TTS_PROVIDER=edge_tts
+```
+
+#### GPU 环境
+
+| 项目 | 值 |
+|------|-----|
+| GPU | NVIDIA GeForce RTX 5070 Laptop，**12GB VRAM** |
+| 驱动 | 595.97，CUDA 13.2（容器内镜像：CUDA 12.8） |
+| GPU 架构 | **Blackwell (sm_120)** — 注意 Triton 支持尚不成熟 |
+| 模型挂载 | `D:\work\novel-comic-drama\models\` → 容器内 `/app/models/` |
+
+---
+
+### 三、代码结构（已实现）
+
+```
+novel-workflow/
+├── services/
+│   ├── shared/
+│   │   ├── job_manager.py        # 异步 Job 生命周期 + SSE 广播
+│   │   └── model_manager.py      # GPU 模型 TTL 按需加载/卸载
+│   ├── storyboard/               # 端口 8001，KimiProvider
+│   ├── image/                    # 端口 8002，FluxLocalProvider（4-bit NF4）
+│   │   └── providers/
+│   │       ├── flux_local.py     # ← 当前调试重点
+│   │       └── mock.py
+│   ├── tts/                      # 端口 8003，EdgeTTSProvider
+│   ├── video/                    # 端口 8004，WanSubprocessProvider
+│   └── assembly/                 # 端口 8005，FFmpeg 9步 pipeline
+├── apps/web/                     # Next.js 15 前端
+│   └── app/
+│       ├── api/pipeline/         # SSE 代理 + 服务编排
+│       └── projects/             # Pipeline Wizard UI
+├── projects/
+│   └── test-gpu-001/
+│       └── storyboard.json       # 测试用（1个 shot）
+├── docker-compose.yml
+└── .env
+```
+
+---
+
+### 四、当前唯一阻塞：image-service GPU 崩溃
+
+#### 现象
+
+调用 `POST http://localhost:8002/jobs` 后，image-service 开始加载 FLUX.1-dev 模型，但在 `FluxPipeline.from_pretrained()` 加载组件（3~7/7）时，进程**无声死亡**（无 Python traceback），容器被 `restart: unless-stopped` 策略重启。
+
+#### 排查历程
+
+1. **首次失败**：`protobuf` 和 `sentencepiece` 未安装在运行容器中  
+   - 临时修复：`docker exec pip install protobuf sentencepiece` ✅  
+   - 根本原因：镜像构建时缓存问题，`requirements.txt` 里有但没装进去  
+
+2. **第二次失败**：`torch.compile(mode="max-autotune")` 与 bitsandbytes NF4 在 Blackwell 上冲突  
+   - 另一个 Agent 在 `flux_local.py` 里添加了 `torch.compile` 优化  
+   - Blackwell (sm_120) 上 Triton 支持未成熟，导致 C 层 SIGSEGV，无任何 Python traceback  
+   - **已修复**：`torch.compile` 已从代码中注释掉 ✅  
+
+3. **第三次失败（当前）**：移除 `torch.compile` 后仍崩溃  
+   - 崩溃发生在 pipeline 加载 3~7/7 组件期间（计时约 35 秒内）  
+   - **推测根因**：`pipe.enable_model_cpu_offload()` 与 bitsandbytes NF4 量化张量冲突——NF4 量化张量是 CUDA-only 格式，accelerate 的 cpu offload hook 尝试将其移至 CPU 时触发底层崩溃  
+   - **尚未验证**，会话在此暂停
+
+#### 当前 `flux_local.py` 关键代码（`_load()` 末尾）
+
+```python
+# services/image/providers/flux_local.py
+
+torch.cuda.empty_cache()
+pipe.enable_model_cpu_offload()   # ← 怀疑崩溃点
+pipe.vae.enable_slicing()
+pipe.vae.enable_tiling()
+# torch.compile 已注释掉（Blackwell + bitsandbytes 不稳定）
+logger.info("Pipeline ready (torch.compile skipped for bitsandbytes compat)")
+return pipe
+```
+
+> ⚠️ **注意**：`flux_local.py` 宿主机已更新，但容器内靠 `docker cp` 注入。  
+> 如果容器被镜像级重建（而非 `docker restart`），需要重新 `docker cp`。
+
+---
+
+### 五、OPENCODE 的任务清单
+
+#### 🔴 任务 1（必须，根本修复）：重建 image-service 镜像
+
+```bash
+cd D:\work\novel-workflow
+docker compose build --no-cache image-service
+docker compose up -d image-service
+```
+
+重建后 `protobuf` 和 `sentencepiece` 会真正打进镜像，不再依赖手动 `pip install`。
+
+#### 🔴 任务 2：修复 `enable_model_cpu_offload` 崩溃
+
+bitsandbytes NF4 量化后 transformer ~6GB，RTX 5070 12GB VRAM 理论够用，**尝试去掉 `enable_model_cpu_offload()`，改为显式移到 GPU**：
+
+```python
+# services/image/providers/flux_local.py 中替换：
+# 原来：pipe.enable_model_cpu_offload()
+# 改为：
+
+pipe.vae = pipe.vae.to("cuda")
+pipe.text_encoder = pipe.text_encoder.to("cuda")
+# transformer 已是 bitsandbytes NF4，在 GPU 上，不需要移动
+# text_encoder_2 (T5) 保持 CPU（已用 low_cpu_mem_usage 加载）
+pipe.vae.enable_slicing()
+pipe.vae.enable_tiling()
+```
+
+如果 12GB 装不下，回退方案：用 `enable_sequential_cpu_offload()`（比 `enable_model_cpu_offload` 对量化模型更友好）。
+
+#### 🟡 任务 3（辅助诊断）：加 faulthandler 捕获 C 层崩溃
+
+如果任务 2 仍崩溃，在 `_load()` 函数开头加：
+
+```python
+import faulthandler, sys
+faulthandler.enable(file=sys.stderr)
+```
+
+然后 `docker cp` + `docker restart`，触发加载，从 `docker logs` 里找 C 层 stack trace。
+
+---
+
+### 六、测试流程（每次改完后执行）
+
+```bash
+# Step 1: 更新容器内代码（重建镜像则跳过）
+docker cp services/image/providers/flux_local.py \
+    novel-workflow-image-service-1:/app/providers/flux_local.py
+
+# Step 2: 重启服务
+docker restart novel-workflow-image-service-1
+sleep 5
+
+# Step 3: 触发图片生成
+curl -s -X POST http://localhost:8002/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"test-gpu-001","config":{"width":768,"height":768,"num_inference_steps":15,"guidance_scale":3.5,"seed":42}}'
+# 期望返回：{"job_id":"...","status":"queued"}
+
+# Step 4: 监控模型加载（需约 2 分钟）
+watch -n 10 "curl -s http://localhost:8002/model/status"
+# 期望：state 从 loading → loaded
+
+# Step 5: 查看日志
+docker logs -f novel-workflow-image-service-1
+
+# Step 6: 查询任务状态（用 Step 3 返回的 job_id）
+curl -s http://localhost:8002/jobs/{job_id}/status
+```
+
+**成功标志**：
+- `model/status` 返回 `"state":"loaded"`
+- `jobs/{job_id}/status` 返回 `"status":"completed"`
+- 文件 `D:\work\novel-workflow\projects\test-gpu-001\images\shot-001.png` 存在且可打开
+
+---
+
+### 七、已知坑（本次调试发现）
+
+| 问题 | 现象 | 解法 |
+|------|------|------|
+| 镜像缺 `protobuf`/`sentencepiece` | POST /jobs 返回 500，ImportError | `--no-cache` 重建镜像 |
+| `torch.compile` + bitsandbytes + Blackwell | C 层 SIGSEGV，无 traceback | 已注释掉 torch.compile |
+| `enable_model_cpu_offload` + NF4 | 加载过程中无声崩溃 | 待验证，尝试去掉 offload |
+| `docker restart` vs 镜像重建 | 重建后 pip install 丢失 | 重建镜像才是根本修复 |
+
+---
+
+*本节由 Claude Sonnet 4.6 创建，2026-04-19*
+
+---
+
 ## 附：Phase 2 并行策略
 
 ```

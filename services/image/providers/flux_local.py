@@ -61,21 +61,14 @@ class FluxLocalProvider(ImageProvider):
                 torch_dtype=torch.float16,
                 local_files_only=True,
             )
+            torch.cuda.empty_cache()
             pipe.enable_model_cpu_offload()
             pipe.vae.enable_slicing()
             pipe.vae.enable_tiling()
-
-            # torch.compile for Blackwell (sm_120) on Linux Docker
-            import sys
-            if sys.platform != "win32":
-                cap = torch.cuda.get_device_capability()
-                if cap[0] >= 8:
-                    logger.info(f"Enabling torch.compile (sm_{cap[0]}{cap[1]})...")
-                    pipe.transformer = torch.compile(
-                        pipe.transformer,
-                        mode="max-autotune",
-                        fullgraph=False,
-                    )
+            # NOTE: torch.compile(mode="max-autotune") crashes on Blackwell (sm_120)
+            # with bitsandbytes NF4 quantization — C-level SIGSEGV, no Python traceback.
+            # Skipping torch.compile until bitsandbytes + Triton Blackwell support matures.
+            logger.info("Pipeline ready (torch.compile skipped for bitsandbytes compat)")
             return pipe
 
         loop = asyncio.get_event_loop()

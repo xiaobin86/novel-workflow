@@ -1,0 +1,163 @@
+version: "3.9"
+
+# Shared volume for all project data
+x-projects-vol: &projects-vol
+  type: bind
+  source: ./projects
+  target: /app/projects
+
+# Shared volume for AI models (read-only)
+x-models-vol: &models-vol
+  type: bind
+  source: ./models
+  target: /app/models
+  read_only: true
+
+# Common env vars for all services
+x-common-env: &common-env
+  PROJECTS_BASE_DIR: /app/projects
+  MOCK_MODE: ${MOCK_MODE:-false}
+
+services:
+  # ── storyboard-service ──────────────────────────────────────────────────────
+  storyboard-service:
+    build:
+      context: ./services/storyboard
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    volumes:
+      - *projects-vol
+    environment:
+      <<: *common-env
+      KIMI_API_KEY: ${KIMI_API_KEY}
+      KIMI_API_BASE: ${KIMI_API_BASE:-https://api.moonshot.cn/v1}
+      KIMI_MODEL: ${KIMI_MODEL:-moonshot-v1-8k}
+      STORYBOARD_PROVIDER: ${STORYBOARD_PROVIDER:-kimi}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── image-service ───────────────────────────────────────────────────────────
+  image-service:
+    build:
+      context: ./services/image
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8000"
+    volumes:
+      - *projects-vol
+      - *models-vol
+    environment:
+      <<: *common-env
+      IMAGE_PROVIDER: ${IMAGE_PROVIDER:-flux_local}
+      FLUX_MODEL_PATH: /app/models/FLUX.1-dev
+      MODEL_TTL_SECONDS: ${MODEL_TTL_SECONDS:-600}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── tts-service ─────────────────────────────────────────────────────────────
+  tts-service:
+    build:
+      context: ./services/tts
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8000"
+    volumes:
+      - *projects-vol
+    environment:
+      <<: *common-env
+      TTS_PROVIDER: ${TTS_PROVIDER:-edge_tts}
+      TTS_ACTION_VOICE: ${TTS_ACTION_VOICE:-zh-CN-YunxiNeural}
+      TTS_DIALOGUE_VOICE: ${TTS_DIALOGUE_VOICE:-zh-CN-XiaoxiaoNeural}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── video-service ───────────────────────────────────────────────────────────
+  video-service:
+    build:
+      context: ./services/video
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8000"
+    volumes:
+      - *projects-vol
+      - *models-vol
+    environment:
+      <<: *common-env
+      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-wan_local}
+      WAN_MODEL_PATH: /app/models/Wan2.1-T2V-1.3B
+      WAN_GENERATE_TIMEOUT: ${WAN_GENERATE_TIMEOUT:-600}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── assembly-service ─────────────────────────────────────────────────────────
+  assembly-service:
+    build:
+      context: ./services/assembly
+      dockerfile: Dockerfile
+    ports:
+      - "8005:8000"
+    volumes:
+      - *projects-vol
+    environment:
+      <<: *common-env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── web (Next.js) ───────────────────────────────────────────────────────────
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - *projects-vol
+    environment:
+      PROJECTS_BASE_DIR: /app/projects
+      STORYBOARD_SERVICE_URL: http://storyboard-service:8000
+      IMAGE_SERVICE_URL: http://image-service:8000
+      TTS_SERVICE_URL: http://tts-service:8000
+      VIDEO_SERVICE_URL: http://video-service:8000
+      ASSEMBLY_SERVICE_URL: http://assembly-service:8000
+    depends_on:
+      - storyboard-service
+      - image-service
+      - tts-service
+      - video-service
+      - assembly-service
+    restart: unless-stopped

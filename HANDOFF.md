@@ -1,9 +1,9 @@
 # Handoff Document — Novel Workflow v1.0
 
 > **生成时间**：2026-04-19  
-> **生成者**：Sisyphus Agent  
-> **状态**：Phase 1-3 开发中（由另一 Agent 执行）  
-> **目标读者**：执行编码的 Agent
+> **生成者**：Sisyphus Agent → Claude Sonnet 4.6  
+> **状态**：Phase 1-3 已完成，等待用户审核  
+> **目标读者**：执行 Phase 4 集成部署的 Agent（或用户审核后继续）
 
 ---
 
@@ -53,15 +53,16 @@ git checkout -b feature/phase-1-skeleton develop
 | UI 调研 | `docs/research/ui-design/` | 完整 |
 | AI 服务调研 | `docs/research/ai-services/` | 完整 |
 
-### 🚧 进行中（编码阶段）
+### ✅ 已完成（编码阶段）— 2026-04-19
 
-**你的任务**：完成 Phase 1-3 的编码工作
+**由 Claude Sonnet 4.6 完成，develop 分支已推送。**
 
-| Phase | 内容 | 范围 |
-|-------|------|------|
-| **Phase 1** | 项目骨架 + 通用模块 | `services/` 目录结构、`shared/job_manager.py`、`shared/model_manager.py`、`.env.example` |
-| **Phase 2** | 5个后端服务 | storyboard / image / tts / video / assembly |
-| **Phase 3** | Next.js 前端 | 项目初始化、API Routes、Pipeline Wizard、各步骤组件 |
+| Phase | 内容 | 状态 | 分支 |
+|-------|------|------|------|
+| **Phase 1** | 项目骨架 + shared 公共模块 | ✅ 完成 | feature/phase-1-skeleton |
+| **Phase 2** | 5个后端服务 | ✅ 完成 | feature/phase-1-skeleton |
+| **Phase 3** | Next.js 前端 | ✅ 完成 | feature/nextjs-frontend |
+| **Phase 4** | 集成部署 | ⏳ 等待审核 | — |
 
 ### ⏳ 暂停（等待用户审核）
 
@@ -464,9 +465,50 @@ D:/work/novel-comic-drama-2/
 
 ---
 
-*本文档由 Sisyphus Agent 创建*  
+*本文档由 Sisyphus Agent 创建，Claude Sonnet 4.6 完成编码并更新*  
 *最后更新：2026-04-19*  
-*状态：等待编码 Agent 接手*
+*状态：Phase 1-3 完成，等待用户审核，Phase 4 暂停*
+
+---
+
+## 当前状态（实时更新）
+
+### ✅ 已完成 — 2026-04-19
+
+**Phase 1: 项目骨架**
+- `services/shared/job_manager.py` — 异步 Job 生命周期、SSE 广播、GC
+- `services/shared/model_manager.py` — GPU 模型 TTL 自动卸载 + 强制卸载
+
+**Phase 2: 5 个后端服务**
+- `services/storyboard/` — KimiProvider + MockProvider，原子写 storyboard.json
+- `services/tts/` — EdgeTTSProvider（分段合成）+ MockProvider，写 audio_durations.json
+- `services/image/` — FluxLocalProvider（NF4量化）+ MockProvider，ModelManager 集成
+- `services/video/` — WanLocalProvider（subprocess + Semaphore + timeout）+ MockProvider
+- `services/assembly/` — 9步 FFmpeg pipeline，SRT 生成，adelay 混音
+- `docker-compose.yml` — 6个容器，healthcheck，GPU reservation
+- `.env.example` — 所有环境变量文档
+
+**Phase 3: Next.js 前端**
+- `apps/web/` — Next.js 15 App Router + shadcn/ui + Tailwind
+- API Routes: 项目 CRUD、pipeline start、SSE 代理、文件代理
+- `hooks/useStepProgress.ts` — EventSource SSE 消费
+- `hooks/useProjectState.ts` — SWR 轮询
+- `/projects` — 项目列表 + 新建对话框
+- `/projects/[id]` — Pipeline Wizard（5步，自动模式切换，GPU handoff）
+
+### 已知问题
+
+1. **`node_modules/` 未提交**：`apps/web/node_modules` 在 .gitignore 中，需在部署时 `npm install`
+2. **apps/web 原为 submodule**：已转换为普通目录，git 历史中有一个 submodule commit（无功能影响）
+3. **MOCK_MODE 视频生成**：MockVideoProvider 用 ffmpeg 生成纯黑视频，需要宿主机有 ffmpeg
+4. **image-service mock**：MockImageProvider 用 Pillow 生成纯色图，需要 Pillow 安装
+
+### Phase 4 建议（下一步）
+
+1. 测试 MOCK_MODE=true 下的完整流程（全链路 E2E）
+2. 在真实 GPU 环境测试 image-service 和 video-service
+3. 配置 `.env`（从 `.env.example` 复制，填入真实 KIMI_API_KEY）
+4. `docker compose up --build` 验证所有容器启动
 
 ---
 

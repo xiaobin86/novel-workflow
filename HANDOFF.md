@@ -542,42 +542,74 @@ D:/work/novel-comic-drama-2/
 
 ---
 
-### video-service 现状（已发现 4 个 Bug，已修复）
+### video-service 现状（代码 Bug 已修复，剩余 Docker 内存问题）
 
-#### 发现的 Bug（全部已修复，待测试）
+#### 已修复的代码 Bug
 
 | Bug | 文件 | 描述 | 严重性 |
 |-----|------|------|--------|
 | ✅ `--sample_nums` 无效参数 | `wan_local.py` | generate.py 不接受此参数，subprocess 立即退出 | 🔴 致命 |
-| ✅ 缺少 Wan 依赖 | `requirements.txt` | easydict/imageio/diffusers 等未包含，subprocess Python 无法运行 generate.py | 🔴 致命 |
+| ✅ 缺少 Wan 依赖 | `requirements.txt` | 缺 easydict/einops/dashscope/imageio/diffusers 等，subprocess Python 无法运行 generate.py | 🔴 致命 |
 | ✅ UTF-8 BOM 编码 | `job_handler.py` | storyboard.json 有 BOM，encoding="utf-8" 解析失败 | 🔴 致命 |
 | ✅ 缺少错误日志 | `job_handler.py` | 异常时无 traceback 输出，难以调试 | 🟡 重要 |
 
-#### 修复内容
+#### 当前剩余问题：Docker Desktop 内存不足（OOM）
 
-1. **`wan_local.py`**：删除 `"--sample_nums", "1"` 行
-2. **`requirements.txt`**：添加 `easydict imageio imageio-ffmpeg ftfy diffusers transformers tokenizers accelerate tqdm opencv-python-headless`
+**根因**：Wan2.1-T2V-1.3B 需要约 16-18GB RAM，而 Docker Desktop 仅分配了 **15.21GB**。
+
+| 组件 | 文件大小 | RAM 需求 |
+|------|---------|---------|
+| T5 UMT5-XXL encoder (bf16) | 11GB | ~11GB（CPU）|
+| Wan DiT 1.3B (safetensors) | 5.3GB | offload 模式 ~2-3GB 峰值 |
+| VAE | 485MB | ~500MB |
+| PyTorch CUDA ctx + FastAPI | — | ~1-2GB |
+| **总计** | ~17GB | **~14-17GB**（峰值更高）|
+
+PyTorch 加载 .pth 文件时会短暂需要 **2x 文件大小**（原始 mmap + 加载副本），T5 峰值可达 **~18-22GB**，超出 15.21GB 限制被 OOM Killer SIGKILL（exit code -9 / exit code 137）。
+
+**Windows 宿主机可以运行的原因**：直接访问 32GB 物理 RAM，无 Docker 限制。
+
+#### 解决方案（必须执行一次，需要重启 Docker）
+
+```
+Docker Desktop → Settings → Resources → Memory → 调整为 24 GB
+→ Apply & Restart
+```
+
+调整后验证：
+```bash
+docker info | grep "Total Memory"
+# 期望：Total Memory: 24GiB
+```
+
+#### 代码侧修复内容
+
+1. **`wan_local.py`**：删除 `"--sample_nums", "1"` 行（无效参数）
+2. **`requirements.txt`**：添加 `easydict einops imageio imageio-ffmpeg ftfy dashscope diffusers transformers tokenizers accelerate tqdm opencv-python-headless torchvision`（docker exec 临时安装：einops, dashscope, torchvision — 需要重建镜像）
 3. **`job_handler.py`**：`encoding="utf-8"` → `"utf-8-sig"`，添加 `logger.error(...traceback...)` 
-4. **测试项目**：创建 `projects/test-video-001/`（含 storyboard.json + audio_durations.json）
+4. **测试项目**：`projects/test-video-001/`（含完整 storyboard.json + audio_durations.json）
 
-#### 测试流程
+#### 测试流程（调整内存后执行）
 
 ```bash
-# Step 1: 重建容器（含新依赖）
+# Step 1: 调整 Docker Desktop 内存至 24GB，重启
+
+# Step 2: 重建容器（含所有依赖）
 cd D:\work\novel-workflow
 docker compose build --no-cache video-service
 docker compose up -d video-service
 
-# Step 2: 提交视频生成任务
+# Step 3: 提交视频生成任务
 curl -s -X POST http://localhost:8004/jobs \
   -H "Content-Type: application/json" \
   -d '{"project_id":"test-video-001","config":{"width":832,"height":480,"num_frames":65,"num_inference_steps":20}}'
 
-# Step 3: 跟踪进度（Wan 每段约 5 分钟）
-curl -s http://localhost:8004/jobs/{job_id}/status
+# Step 4: 跟踪 SSE 事件（Wan 每段约 5 分钟）
+JOB_ID="从上面返回"
+curl -s "http://localhost:8004/jobs/$JOB_ID/events"
 
 # 成功标志：
-# - status=completed
+# - SSE 返回 event: complete (not event: error)
 # - projects/test-video-001/clips/shot-001.mp4 存在且大小 > 0
 ```
 

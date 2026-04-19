@@ -5,6 +5,7 @@ torch==2.7.0
 
 # Wan2.1 runtime dependencies (needed by subprocess generate.py)
 easydict
+einops
 imageio
 imageio-ffmpeg
 ftfy
@@ -14,4 +15,7 @@ tokenizers>=0.20.3
 accelerate>=1.1.1
 tqdm
 opencv-python-headless
+torchvision
+dashscope
 # flash_attn is optional (Wan uses try/except); skipped here — too hard to build
+# xfuser only needed for distributed/USP mode; skipped for single-GPU

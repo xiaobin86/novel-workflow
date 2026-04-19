@@ -246,16 +246,24 @@
 
 ---
 
-### Phase 4: 集成与部署（~10小时）
+### Phase 4: 集成与部署（~10小时）⚠️ **此阶段需经用户审核后再启动**
 
-**目标**：Docker 编排 + 端到端集成测试
+**目标**：Docker 编排 + 端到端集成测试  
+**状态**：Phase 1-3 完成并经用户确认后，方可进入此阶段
 
 | 任务ID | 任务 | 说明 | 预估工时 | 依赖 | 交付物 |
 |--------|------|------|----------|------|--------|
-| **4.1** | Docker Compose 编排 | 5服务 + Next.js + 模型挂载 + GPU | 4h | Phase 2-3 | `infra/docker-compose.yml` |
+| **4.1** | Docker Compose 编排 | 5服务 + Next.js + 模型挂载 + GPU | 4h | Phase 2-3 + 用户确认 | `infra/docker-compose.yml` |
 | **4.2** | 服务健康检查 | 各服务 Dockerfile + healthcheck 配置 | 2h | 4.1 | 容器健康检查正常 |
-| **4.3** | 端到端测试 | 完整 Pipeline 跑通（使用测试文本） | 3h | 4.2 | 最终视频生成成功 |
-| **4.4** | 进程守护验证 | 异常恢复、优雅关闭测试 | 1h | 4.3 | 崩溃后可自动恢复 |
+| **4.3** | Mock 集成测试 | 使用 mock 数据验证 Pipeline 流程（不依赖真实 GPU） | 2h | 4.2 | 流程跑通，记录问题 |
+| **4.4** | 用户审核 | 展示 mock 测试结果，等待用户确认 | - | 4.3 | 用户批准继续 |
+| **4.5** | 真实 GPU 集成测试 | 完整 Pipeline 跑通（使用测试文本） | 3h | 4.4 | 最终视频生成成功 |
+| **4.6** | 进程守护验证 | 异常恢复、优雅关闭测试 | 1h | 4.5 | 崩溃后可自动恢复 |
+
+**审核检查点**：
+- Phase 1-3 完成后，必须向用户汇报进展
+- Mock 集成测试（4.3）完成后，必须展示结果并等待用户确认
+- 用户确认后，方可进行真实 GPU 测试（4.5）
 
 **设计参考**：`docs/technical/design/01-services-overview.md` 第5节（启动顺序）、第7节（进程守护）
 
@@ -298,6 +306,25 @@ Phase 1: [1.1] → [1.2 + 1.3 + 1.4]
 - **Phase 2+3 完成后**：启动 Phase 4
 
 **建议**：每个 Phase 完成后做一次集成验证，不要等全部完成再集成。
+
+### Mock 开发策略
+
+在真实 GPU/模型环境就绪前，所有服务应支持 **Mock 模式**，以便并行开发和前端联调：
+
+| 服务 | Mock 方式 | Mock 输出 |
+|------|----------|----------|
+| storyboard-service | 返回预定义的 storyboard.json | `fixtures/mock_storyboard.json` |
+| image-service | 复制预置的 PNG 图片 | `fixtures/mock_images/*.png` |
+| tts-service | 复制预置的 WAV 音频 | `fixtures/mock_audio/*.wav` |
+| video-service | 复制预置的 MP4 视频 | `fixtures/mock_clips/*.mp4` |
+| assembly-service | 复制预置的 final.mp4 | `fixtures/mock_output/final.mp4` |
+
+**Mock 切换方式**：通过环境变量 `MOCK_MODE=true` 控制，Mock Provider 在 `providers/mock.py` 中实现。
+
+**好处**：
+- 前端开发无需等待后端服务完成
+- 集成测试可在无 GPU 环境下验证流程
+- 快速迭代 UI 和流程逻辑
 
 ---
 
@@ -401,6 +428,24 @@ D:\work\novel-comic-drama\models\
 | OS | Windows 11 |
 | Python | 3.12 |
 | PyTorch | 2.7.0+cu128 |
+
+---
+
+## 9. 用户确认记录
+
+### 2026-04-18 用户确认（通过对话）
+
+**确认内容**：
+1. ✅ **按上述顺序开发**：Phase 1 → Phase 2 → Phase 3 → Phase 4（审核点）
+2. ✅ **并行开发**：使用子 Agent 并行执行独立任务
+3. ✅ **到集成部署时停下**：Phase 4 需经用户审核后再启动
+4. ✅ **先 Mock 后真实**：Mock 集成测试（4.3）完成后，向用户展示结果并等待确认，确认后方可进行真实 GPU 测试（4.5）
+5. ✅ **交接给另一 Agent**：当前 Agent（Sisyphus）完成规划后暂停，由另一 Agent 开始执行 Phase 1-3
+
+**补充要求**：
+- 每个任务完成后更新 HANDOFF.md
+- 另一 Agent 工作完成后需提供交接文档
+- Phase 1-3 完成后必须向用户汇报进展
 
 ---
 

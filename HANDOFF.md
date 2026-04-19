@@ -512,6 +512,77 @@ D:/work/novel-comic-drama-2/
 
 ---
 
+## 当前完整状态 — 2026-04-20（CLAUDE 更新）
+
+> **工作目录**：`D:\work\novel-workflow`  
+> **更新时间**：2026-04-20
+
+---
+
+### image-service 现状（GPU 崩溃，暂停调试）
+
+#### 已完成的修复
+
+| 修复 | 文件 | 内容 |
+|------|------|------|
+| ✅ PTX JIT 修复 | `services/image/entrypoint.sh` | 动态发现 `/usr/lib/wsl/drivers/*/libnvidia-ptxjitcompiler.so.1` 并注入 LD_LIBRARY_PATH |
+| ✅ Dockerfile 更新 | `services/image/Dockerfile` | 添加 ENTRYPOINT ["/entrypoint.sh"] |
+| ✅ docker-compose.yml | 同上 | 添加 CUDA_LAUNCH_BLOCKING=1、PYTORCH_CUDA_ALLOC_CONF、shm_size=4gb |
+| ✅ 去除 torch.compile | `services/image/providers/flux_local.py` | Blackwell+bitsandbytes NF4 SIGSEGV 根因 |
+| ✅ BOM 修复 | `services/image/job_handler.py` | encoding="utf-8-sig" |
+| ✅ 错误日志 | `services/image/job_handler.py` | traceback.format_exc() |
+| ✅ enable_model_cpu_offload | `services/image/providers/flux_local.py` | 用 accelerate 管理 T5/VAE 设备调度，避免 cpu/cuda 设备不匹配 |
+
+#### 仍存在的问题
+
+- **模型加载仍崩溃**：每次 load 大约 1-2 分钟后无声死亡（无 Python traceback），容器重启
+- 推测根因：WSL2 + Docker + Blackwell (sm_120) + bitsandbytes NF4 存在深层兼容性问题
+- entrypoint.sh 已注入 PTX JIT 路径，但崩溃仍然发生（可能是 sm_120 native kernel 缺失的其他表现）
+- **建议**：暂停 image-service，先测通 video-service，之后再回头攻克 image-service
+
+---
+
+### video-service 现状（已发现 4 个 Bug，已修复）
+
+#### 发现的 Bug（全部已修复，待测试）
+
+| Bug | 文件 | 描述 | 严重性 |
+|-----|------|------|--------|
+| ✅ `--sample_nums` 无效参数 | `wan_local.py` | generate.py 不接受此参数，subprocess 立即退出 | 🔴 致命 |
+| ✅ 缺少 Wan 依赖 | `requirements.txt` | easydict/imageio/diffusers 等未包含，subprocess Python 无法运行 generate.py | 🔴 致命 |
+| ✅ UTF-8 BOM 编码 | `job_handler.py` | storyboard.json 有 BOM，encoding="utf-8" 解析失败 | 🔴 致命 |
+| ✅ 缺少错误日志 | `job_handler.py` | 异常时无 traceback 输出，难以调试 | 🟡 重要 |
+
+#### 修复内容
+
+1. **`wan_local.py`**：删除 `"--sample_nums", "1"` 行
+2. **`requirements.txt`**：添加 `easydict imageio imageio-ffmpeg ftfy diffusers transformers tokenizers accelerate tqdm opencv-python-headless`
+3. **`job_handler.py`**：`encoding="utf-8"` → `"utf-8-sig"`，添加 `logger.error(...traceback...)` 
+4. **测试项目**：创建 `projects/test-video-001/`（含 storyboard.json + audio_durations.json）
+
+#### 测试流程
+
+```bash
+# Step 1: 重建容器（含新依赖）
+cd D:\work\novel-workflow
+docker compose build --no-cache video-service
+docker compose up -d video-service
+
+# Step 2: 提交视频生成任务
+curl -s -X POST http://localhost:8004/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"test-video-001","config":{"width":832,"height":480,"num_frames":65,"num_inference_steps":20}}'
+
+# Step 3: 跟踪进度（Wan 每段约 5 分钟）
+curl -s http://localhost:8004/jobs/{job_id}/status
+
+# 成功标志：
+# - status=completed
+# - projects/test-video-001/clips/shot-001.mp4 存在且大小 > 0
+```
+
+---
+
 ## 当前完整状态 — 2026-04-19（CLAUDE → OPENCODE 交接）
 
 > **交接自**：Claude Sonnet 4.6  

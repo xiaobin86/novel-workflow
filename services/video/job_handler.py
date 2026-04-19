@@ -1,9 +1,13 @@
 import json
+import logging
 import os
+import traceback
 from pathlib import Path
 
 from shared.job_manager import JobRecord
 from providers.base import VideoProvider
+
+logger = logging.getLogger(__name__)
 
 PROJECTS_BASE = os.getenv("PROJECTS_BASE_DIR", "/app/projects")
 
@@ -28,7 +32,7 @@ def _calculate_clip_duration(shot: dict, audio_durations: dict) -> float:
 async def run_generate_clips_job(job: JobRecord, project_id: str, config: dict, provider: VideoProvider):
     project_dir = Path(PROJECTS_BASE) / project_id
 
-    storyboard = json.loads((project_dir / "storyboard.json").read_text(encoding="utf-8"))
+    storyboard = json.loads((project_dir / "storyboard.json").read_text(encoding="utf-8-sig"))
     shots = storyboard["shots"]
 
     dur_path = project_dir / "audio_durations.json"
@@ -70,6 +74,7 @@ async def run_generate_clips_job(job: JobRecord, project_id: str, config: dict, 
             )
             clips.append({"shot_id": shot_id, "filename": f"{shot_id}.mp4", "duration": duration})
         except Exception as exc:
+            logger.error(f"generate_clip failed for {shot_id}: {exc}\n{traceback.format_exc()}")
             await job.emit_error(str(exc), shot_id=shot_id, retryable=True)
             continue
 

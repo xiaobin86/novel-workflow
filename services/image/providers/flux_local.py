@@ -61,14 +61,17 @@ class FluxLocalProvider(ImageProvider):
                 torch_dtype=torch.float16,
                 local_files_only=True,
             )
+            # enable_model_cpu_offload：由 accelerate 管理各组件的 GPU/CPU 调度
+            # 注意：之前此处会崩溃是因为 WSL2 容器缺少 libnvidia-ptxjitcompiler.so.1
+            # （PTX JIT 编译器缺失 → CUDA kernel JIT 失败 → 进程无声死亡）
+            # 现在 entrypoint.sh 已将 WSL2 驱动路径注入 LD_LIBRARY_PATH，不再崩溃。
+            # accelerate 1.3.0 对 bitsandbytes NF4 量化模型有专门处理：
+            # 量化张量保持在 CUDA 不被 offload，其余模块（T5、VAE 等）按需调度。
             torch.cuda.empty_cache()
             pipe.enable_model_cpu_offload()
             pipe.vae.enable_slicing()
             pipe.vae.enable_tiling()
-            # NOTE: torch.compile(mode="max-autotune") crashes on Blackwell (sm_120)
-            # with bitsandbytes NF4 quantization — C-level SIGSEGV, no Python traceback.
-            # Skipping torch.compile until bitsandbytes + Triton Blackwell support matures.
-            logger.info("Pipeline ready (torch.compile skipped for bitsandbytes compat)")
+            logger.info("Pipeline ready (cpu_offload enabled, PTX JIT available via WSL2 driver)")
             return pipe
 
         loop = asyncio.get_event_loop()

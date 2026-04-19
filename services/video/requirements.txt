@@ -2,3 +2,16 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.9.2
 torch==2.7.0
+
+# Wan2.1 runtime dependencies (needed by subprocess generate.py)
+easydict
+imageio
+imageio-ffmpeg
+ftfy
+diffusers>=0.31.0
+transformers>=4.49.0
+tokenizers>=0.20.3
+accelerate>=1.1.1
+tqdm
+opencv-python-headless
+# flash_attn is optional (Wan uses try/except); skipped here — too hard to build

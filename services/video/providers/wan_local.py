@@ -17,7 +17,9 @@ from .base import VideoProvider
 logger = logging.getLogger(__name__)
 
 MODEL_PATH = os.getenv("WAN_MODEL_PATH", "/app/models/Wan2.1-T2V-1.3B")
-GENERATE_SCRIPT = os.path.join(MODEL_PATH, "generate.py")
+# generate.py 在 Wan2.1 仓库目录，不在模型目录
+WAN_REPO_PATH = os.getenv("WAN_REPO_PATH", "/app/wan-repo")
+GENERATE_SCRIPT = os.path.join(WAN_REPO_PATH, "generate.py")
 GENERATE_TIMEOUT = int(os.getenv("WAN_GENERATE_TIMEOUT", "600"))
 
 ANIME_PREFIX = (
@@ -52,13 +54,17 @@ class WanLocalProvider(VideoProvider):
                 "--task", "t2v-1.3B",
                 "--size", f"{width}*{height}",
                 "--ckpt_dir", MODEL_PATH,
+                "--offload_model", "True",   # 显存不足时 CPU 卸载
+                "--t5_cpu",                   # T5 encoder 在 CPU 运行
                 "--sample_steps", str(steps),
-                "--sample_nums", "1",
+                "--sample_shift", "8",        # 推荐采样偏移
+                "--base_seed", "42",
                 "--prompt", full_prompt,
                 "--save_file", tmp_path,
                 "--frame_num", str(num_frames),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=WAN_REPO_PATH,            # 必须在 Wan2.1 仓库目录下运行
             )
             try:
                 stdout, stderr = await asyncio.wait_for(

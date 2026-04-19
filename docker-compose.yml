@@ -6,11 +6,18 @@ x-projects-vol: &projects-vol
   source: ./projects
   target: /app/projects
 
-# Shared volume for AI models (read-only)
+# Shared volume for AI models (read-only) — using models from novel-comic-drama
 x-models-vol: &models-vol
   type: bind
-  source: ./models
+  source: D:/work/novel-comic-drama/models
   target: /app/models
+  read_only: true
+
+# Wan2.1 repo (read-only) — contains generate.py and wan package
+x-wan-repo-vol: &wan-repo-vol
+  type: bind
+  source: D:/work/novel-comic-drama/Wan2.1
+  target: /app/wan-repo
   read_only: true
 
 # Common env vars for all services
@@ -22,8 +29,8 @@ services:
   # ── storyboard-service ──────────────────────────────────────────────────────
   storyboard-service:
     build:
-      context: ./services/storyboard
-      dockerfile: Dockerfile
+      context: ./services
+      dockerfile: storyboard/Dockerfile
     ports:
       - "8001:8000"
     volumes:
@@ -36,7 +43,7 @@ services:
       STORYBOARD_PROVIDER: ${STORYBOARD_PROVIDER:-kimi}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -44,8 +51,8 @@ services:
   # ── image-service ───────────────────────────────────────────────────────────
   image-service:
     build:
-      context: ./services/image
-      dockerfile: Dockerfile
+      context: ./services
+      dockerfile: image/Dockerfile
     ports:
       - "8002:8000"
     volumes:
@@ -56,6 +63,12 @@ services:
       IMAGE_PROVIDER: ${IMAGE_PROVIDER:-flux_local}
       FLUX_MODEL_PATH: /app/models/FLUX.1-dev
       MODEL_TTL_SECONDS: ${MODEL_TTL_SECONDS:-600}
+      # WSL2 + Blackwell (sm_120) 修复：让 CUDA 错误同步可见（而非无声崩溃）
+      CUDA_LAUNCH_BLOCKING: "1"
+      # 优化 CUDA 显存分配，减少碎片化
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    # 共享内存：大模型加载需要足够的 /dev/shm
+    shm_size: "4gb"
     deploy:
       resources:
         reservations:
@@ -65,7 +78,7 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -73,8 +86,8 @@ services:
   # ── tts-service ─────────────────────────────────────────────────────────────
   tts-service:
     build:
-      context: ./services/tts
-      dockerfile: Dockerfile
+      context: ./services
+      dockerfile: tts/Dockerfile
     ports:
       - "8003:8000"
     volumes:
@@ -86,7 +99,7 @@ services:
       TTS_DIALOGUE_VOICE: ${TTS_DIALOGUE_VOICE:-zh-CN-XiaoxiaoNeural}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -94,17 +107,19 @@ services:
   # ── video-service ───────────────────────────────────────────────────────────
   video-service:
     build:
-      context: ./services/video
-      dockerfile: Dockerfile
+      context: ./services
+      dockerfile: video/Dockerfile
     ports:
       - "8004:8000"
     volumes:
       - *projects-vol
       - *models-vol
+      - *wan-repo-vol
     environment:
       <<: *common-env
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-wan_local}
       WAN_MODEL_PATH: /app/models/Wan2.1-T2V-1.3B
+      WAN_REPO_PATH: /app/wan-repo
       WAN_GENERATE_TIMEOUT: ${WAN_GENERATE_TIMEOUT:-600}
     deploy:
       resources:
@@ -115,7 +130,7 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -123,8 +138,8 @@ services:
   # ── assembly-service ─────────────────────────────────────────────────────────
   assembly-service:
     build:
-      context: ./services/assembly
-      dockerfile: Dockerfile
+      context: ./services
+      dockerfile: assembly/Dockerfile
     ports:
       - "8005:8000"
     volumes:
@@ -133,7 +148,7 @@ services:
       <<: *common-env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3

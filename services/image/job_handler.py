@@ -1,9 +1,13 @@
 import json
+import logging
 import os
+import traceback
 from pathlib import Path
 
 from shared.job_manager import JobRecord
 from providers.base import ImageProvider
+
+logger = logging.getLogger(__name__)
 
 PROJECTS_BASE = os.getenv("PROJECTS_BASE_DIR", "/app/projects")
 
@@ -17,7 +21,7 @@ DEFAULT_CONFIG = {
 
 async def run_generate_images_job(job: JobRecord, project_id: str, config: dict, provider: ImageProvider):
     project_dir = Path(PROJECTS_BASE) / project_id
-    storyboard = json.loads((project_dir / "storyboard.json").read_text(encoding="utf-8"))
+    storyboard = json.loads((project_dir / "storyboard.json").read_text(encoding="utf-8-sig"))
     shots = storyboard["shots"]
     images_dir = project_dir / "images"
     images_dir.mkdir(exist_ok=True)
@@ -44,6 +48,7 @@ async def run_generate_images_job(job: JobRecord, project_id: str, config: dict,
             job.done += 1
             await job.emit_progress(shot_id=shot_id, done=job.done, message=f"Generated {shot_id}.png", skipped=False)
         except Exception as exc:
+            logger.error(f"generate_shot failed for {shot_id}: {exc}\n{traceback.format_exc()}")
             await job.emit_error(str(exc), shot_id=shot_id, retryable=True)
             continue
 

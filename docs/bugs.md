@@ -118,5 +118,91 @@ if model_manager is not None:
 
 ---
 
+---
+
+## BUG-003: TTS 启动按钮返回 500，Docker 容器未收到请求
+
+**日期**: 2026-04-20  
+**涉及模块**: `services/tts/`、`docker-compose.yml`、`services/tts/providers/edge_tts.py`  
+**关键词**: `#docker-network` `#network_mode-host` `#wsl2` `#stale-image` `#mutagen` `#mp3`
+
+### 现象
+
+- 点击页面 TTS 步骤的"开始"按钮，`POST /api/pipeline/{id}/tts/start` 返回 500
+- Docker 容器日志无任何请求记录（容器完全没收到请求）
+- `docker ps` 显示 tts-service 为 healthy 状态
+- 修复网络后再次触发，返回 SSE error 事件：`'ascii' codec can't decode byte 0xff in position 0`
+
+### 根因（两层叠加）
+
+**第一层：`network_mode: host` 在 Docker Desktop + WSL2 下无法被 Windows 侧访问**
+
+BUG-001 的修复方案中为 tts-service 添加了 `network_mode: host`，意图让容器直接使用宿主机网络以绕过 edge-tts 的 403。但在 **Docker Desktop + WSL2** 环境下，`network_mode: host` 的"宿主机"是 **WSL2 虚拟机**，不是 Windows 宿主机。
+
+| 请求路径 | 结果 |
+|---|---|
+| 容器内 `localhost:8003`（healthcheck） | ✅ 通（在 WSL2 VM 内） |
+| Windows 侧 `localhost:8003`（Next.js dev server） | ❌ 不通 |
+
+后续架构重构已将 `docker-compose.yml` 中的 tts-service 还原为桥接网络 + `"8003:8000"` 端口映射，但**运行中的容器未重建**，仍在使用旧的 host network 配置。
+
+**第二层：容器镜像陈旧，`mutagen.wave.WAVE` 读取 MP3 文件崩溃**
+
+重建容器（修复网络）后出现第二个错误。容器镜像是基于旧代码构建的：
+
+```python
+# 容器内旧代码（错误）
+from mutagen.wave import WAVE
+audio = WAVE(output_path)   # edge-tts 7.x 输出 MP3，不是 WAV → InvalidChunk
+```
+
+而磁盘上已有修正提交 `65a0479 fix: unify TTS output format from WAV to MP3`：
+
+```python
+# 磁盘上正确代码
+from mutagen.mp3 import MP3
+audio = MP3(output_path)
+```
+
+容器镜像未随代码更新重新构建，导致新旧代码不一致。
+
+**补充说明（更正 BUG-001 的结论）**
+
+BUG-001 记录"即使升级 edge-tts，Docker bridge 网络仍会触发 403，必须使用 host 网络"。本次验证发现，**403 的根因是 edge-tts 6.x 版本被微软屏蔽，与网络模式无关**。在 Docker Desktop + WSL2 环境下，bridge 网络和 host 网络的出口公网 IP 相同（均通过 Windows 主机 NAT），微软看到的 IP 一致。使用 edge-tts 7.2.8 + 桥接网络，TTS 可正常工作。
+
+### 排查过程
+
+1. 查看 `docker ps`：tts-service healthy 但**没有端口映射**（其他服务都有 `0.0.0.0:800x->8000/tcp`）
+2. 在 Windows 侧 `curl localhost:8003` → 不通；在容器内 `curl localhost:8003` → 通，确认是网络隔离问题
+3. 确认 `docker-compose.yml` 已恢复桥接网络，但容器用的是旧配置 → `docker compose up -d --force-recreate tts-service`
+4. 网络修复后重新测试，出现新错误：`InvalidChunk: 'ascii' codec can't decode byte 0xff in position 0`
+5. 容器内执行 `provider.synthesize()` 复现，traceback 指向 `audio = WAVE(output_path)`（line 48）
+6. 对比容器内 vs 磁盘上的 `edge_tts.py`：容器内用 WAVE，磁盘上已改为 MP3
+7. `docker compose build tts-service` + `docker compose up -d tts-service` 重建镜像，问题解决
+
+### 解决方案
+
+```bash
+# Step 1: 重建容器（让 docker-compose.yml 的桥接网络配置生效）
+docker compose up -d --force-recreate tts-service
+
+# Step 2: 重建镜像（让磁盘上已修正的 edge_tts.py 进入容器）
+docker compose build tts-service
+docker compose up -d tts-service
+```
+
+相关已有提交：
+- `c501c50` fix(tts-service): use host network + upgrade edge-tts to bypass 403（引入问题的提交，已被后续架构重构还原）
+- `65a0479` fix: unify TTS output format from WAV to MP3 across all services（解决 mutagen 问题的提交）
+
+### 预防建议
+
+1. **架构变更后必须重建容器**：`docker-compose.yml` 中涉及 `network_mode`、`ports` 等网络配置的改动，必须执行 `docker compose up -d --force-recreate <service>` 而非普通 restart
+2. **代码改动后必须重建镜像**：`services/` 下任何 Python 文件修改后，执行 `docker compose build <service>` 再重启，否则容器运行的是旧镜像
+3. **容器内代码验证**：怀疑代码不一致时，用 `docker exec <container> grep -n "关键词" /app/file.py` 快速确认容器内实际代码
+4. **`network_mode: host` 在 Windows/WSL2 禁用**：该模式在 Linux 生产环境有效，但在 Docker Desktop + WSL2 开发环境中会导致 Windows 侧服务无法访问容器端口，应改用桥接网络 + ports 映射
+
+---
+
 *最后更新：2026-04-20*  
 *维护者：Sisyphus Agent*

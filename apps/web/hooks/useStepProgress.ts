@@ -83,6 +83,8 @@ export function useStepProgress(
             shot_id: data.shot_id,
             type: artifactType,
             filename: data.filename,
+            track: data.track,
+            skipped: data.skipped,
           },
         ]);
       }

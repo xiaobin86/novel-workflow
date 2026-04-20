@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 class JobStatus(str, Enum):
     QUEUED = "queued"
     IN_PROGRESS = "in_progress"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -37,6 +38,9 @@ class JobRecord:
         self._task: asyncio.Task | None = None
         self._queue: asyncio.Queue = asyncio.Queue()
         self._subscribers: list[asyncio.Queue] = []
+        self._pause_event: asyncio.Event = asyncio.Event()
+        self._pause_event.set()  # default: running
+        self._stop_requested: bool = False
 
     def _touch(self):
         self.updated_at = time.time()
@@ -73,6 +77,36 @@ class JobRecord:
             self._subscribers.remove(q)
         except ValueError:
             pass
+
+    # ── Pause / Resume / Stop helpers ──────────────────────────────────────
+
+    async def check_pause(self):
+        """Job handlers call this between work units; blocks if paused,
+        raises CancelledError if stop was requested."""
+        if self._stop_requested:
+            raise asyncio.CancelledError("Stop requested")
+        await self._pause_event.wait()
+
+    async def pause(self):
+        if self.status not in (JobStatus.IN_PROGRESS, JobStatus.QUEUED):
+            raise HTTPException(status_code=409, detail=f"Cannot pause job in status {self.status.value}")
+        self.status = JobStatus.PAUSED
+        self._pause_event.clear()
+        self._touch()
+        await self._broadcast("paused", {"message": "Job paused by user"})
+
+    async def resume(self):
+        if self.status != JobStatus.PAUSED:
+            raise HTTPException(status_code=409, detail=f"Cannot resume job in status {self.status.value}")
+        self.status = JobStatus.IN_PROGRESS
+        self._pause_event.set()
+        self._touch()
+        await self._broadcast("resumed", {"message": "Job resumed"})
+
+    def request_stop(self):
+        self._stop_requested = True
+        self._pause_event.set()  # wake up if currently paused
+        self._touch()
 
     def to_status_dict(self) -> dict:
         return {
@@ -138,6 +172,23 @@ class JobManager:
     def status(self, job_id: str) -> dict:
         return self.get(job_id).to_status_dict()
 
+    async def pause(self, job_id: str):
+        job = self.get(job_id)
+        await job.pause()
+
+    async def resume(self, job_id: str):
+        job = self.get(job_id)
+        await job.resume()
+
+    async def stop(self, job_id: str):
+        job = self.get(job_id)
+        job.request_stop()
+        if job._task and not job._task.done():
+            job._task.cancel()
+        job.status = JobStatus.CANCELLED
+        job._touch()
+        await job._broadcast("stopped", {"message": "Job stopped by user", "done": job.done, "total": job.total})
+
     async def cancel(self, job_id: str):
         job = self.get(job_id)
         if job._task and not job._task.done():
@@ -157,6 +208,9 @@ class JobManager:
             if job.status in (JobStatus.FAILED, JobStatus.CANCELLED):
                 yield _sse("error", {"message": job.error or "job failed"})
                 return
+            # If paused, emit paused then continue waiting for resumed/complete/error
+            if job.status == JobStatus.PAUSED:
+                yield _sse("paused", {"message": "Job is paused"})
 
             q = job.subscribe()
             try:

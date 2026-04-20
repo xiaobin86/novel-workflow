@@ -6,12 +6,46 @@ import fs from "fs/promises";
 import path from "path";
 import { PROJECTS_BASE_DIR, StepName, STEP_ORDER } from "./services";
 
-export type StepStatus = "pending" | "in_progress" | "completed" | "failed";
+export type StepStatus = "pending" | "in_progress" | "paused" | "stopped" | "completed" | "failed";
+
+export interface StoryboardResult {
+  shot_count: number;
+  storyboard_path: string;
+}
+
+export interface ImageResult {
+  images: Array<{ shot_id: string; filename: string }>;
+  total: number;
+}
+
+export interface TTSResult {
+  audio_files: string[];
+  total_tracks: number;
+}
+
+export interface VideoResult {
+  clips: Array<{ shot_id: string; filename: string; duration: number }>;
+  total: number;
+}
+
+export interface AssemblyResult {
+  video_path: string;
+  srt_path: string;
+  duration: number;
+}
+
+export type StepResult =
+  | { type: "storyboard"; data: StoryboardResult }
+  | { type: "image"; data: ImageResult }
+  | { type: "tts"; data: TTSResult }
+  | { type: "video"; data: VideoResult }
+  | { type: "assembly"; data: AssemblyResult };
 
 export interface StepState {
   status: StepStatus;
   job_id: string | null;
   updated_at: string;
+  result?: StepResult | null;
 }
 
 export interface ProjectState {

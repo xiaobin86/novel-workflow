@@ -68,6 +68,24 @@ async def job_status(job_id: str):
     return job_manager.status(job_id)
 
 
+@app.post("/jobs/{job_id}/pause", status_code=200)
+async def pause_job(job_id: str):
+    await job_manager.pause(job_id)
+    return {"job_id": job_id, "status": "paused"}
+
+
+@app.post("/jobs/{job_id}/resume", status_code=200)
+async def resume_job(job_id: str):
+    await job_manager.resume(job_id)
+    return {"job_id": job_id, "status": "in_progress"}
+
+
+@app.post("/jobs/{job_id}/stop", status_code=200)
+async def stop_job(job_id: str):
+    await job_manager.stop(job_id)
+    return {"job_id": job_id, "status": "stopped"}
+
+
 @app.delete("/jobs/{job_id}", status_code=204)
 async def cancel_job(job_id: str):
     await job_manager.cancel(job_id)

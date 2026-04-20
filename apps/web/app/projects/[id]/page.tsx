@@ -3,18 +3,21 @@ import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useProjectState } from "@/hooks/useProjectState";
 import { useStepProgress } from "@/hooks/useStepProgress";
+import { useStepControl } from "@/hooks/useStepControl";
 import { STEP_ORDER, STEP_LABELS, StepName } from "@/lib/services";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { StepArtifacts } from "@/components/step-artifacts";
+import type { StepResult } from "@/lib/project-store";
 
 // ── Auto-mode hook ─────────────────────────────────────────────────────────────
 function useAutoMode(projectId: string) {
   const key = `auto-mode-${projectId}`;
-  const [enabled, setEnabled] = useState(false);
-  useEffect(() => {
-    setEnabled(localStorage.getItem(key) === "true");
-  }, [key]);
+  const [enabled, setEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(key) === "true";
+  });
   const toggle = () => setEnabled((prev) => {
     const next = !prev;
     localStorage.setItem(key, String(next));
@@ -27,12 +30,16 @@ function useAutoMode(projectId: string) {
 const STATUS_ICONS: Record<string, string> = {
   pending:     "○",
   in_progress: "◌",
+  paused:      "⏸",
+  stopped:     "■",
   completed:   "✓",
   failed:      "✗",
 };
 const STATUS_COLORS: Record<string, string> = {
   pending:     "text-zinc-400",
   in_progress: "text-blue-500",
+  paused:      "text-amber-500",
+  stopped:     "text-orange-500",
   completed:   "text-green-600",
   failed:      "text-red-500",
 };
@@ -55,7 +62,7 @@ function StepContent({
     return <p className="text-sm text-zinc-400">等待执行</p>;
   }
 
-  if (status === "in_progress") {
+  if (status === "in_progress" || status === "paused") {
     return (
       <div className="space-y-2">
         <Progress value={progress.percent} className="h-2" />
@@ -65,9 +72,22 @@ function StepContent({
             ? ` (${progress.lastEvent.done}/${progress.lastEvent.total})`
             : ""}
         </p>
+        {status === "paused" && (
+          <p className="text-sm text-amber-600">已暂停，点击继续恢复执行</p>
+        )}
         {progress.error && (
           <p className="text-sm text-red-500">{progress.error}</p>
         )}
+      </div>
+    );
+  }
+
+  if (status === "stopped") {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-orange-600">
+          任务已停止。已生成的文件将被保留，重新开始将自动跳过已存在的文件。
+        </p>
       </div>
     );
   }
@@ -113,10 +133,30 @@ function StepContent({
   return null;
 }
 
+// ── Step artifacts wrapper ─────────────────────────────────────────────────────
+function StepArtifactsWrapper({
+  projectId,
+  status,
+  result,
+}: {
+  projectId: string;
+  status: string;
+  result?: StepResult | null;
+}) {
+  const show = ["completed", "stopped", "in_progress", "paused"].includes(status);
+  if (!show) return null;
+  return (
+    <div className="mt-4 pt-4 border-t">
+      <StepArtifacts result={result} projectId={projectId} />
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: projectId } = use(params);
   const { state, mutate } = useProjectState(projectId);
+  const { pauseStep, resumeStep, stopStep, loading: controlLoading } = useStepControl(projectId, mutate);
   const [autoMode, toggleAutoMode] = useAutoMode(projectId);
   const [starting, setStarting] = useState<StepName | null>(null);
   const autoRef = useRef(autoMode);
@@ -161,11 +201,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     return <div className="p-8 text-zinc-400">加载中...</div>;
   }
 
-  const steps = state.steps as Record<StepName, { status: string; job_id: string | null }>;
+  const steps = state.steps as Record<StepName, { status: string; job_id: string | null; result?: StepResult | null }>;
 
   function canStart(step: StepName): boolean {
     const s = steps[step]?.status;
-    if (s !== "pending" && s !== "failed") return false;
+    if (s !== "pending" && s !== "failed" && s !== "stopped") return false;
     const idx = STEP_ORDER.indexOf(step);
     if (idx === 0) return true;
     // image and tts can both start after storyboard
@@ -199,7 +239,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         {STEP_ORDER.map((step, idx) => {
           const stepState = steps[step];
           const status = stepState?.status ?? "pending";
-          const isActive = status === "in_progress" || status === "completed";
+          const isActive = ["in_progress", "paused", "stopped", "completed"].includes(status);
 
           return (
             <div key={step} className="bg-white border rounded-lg overflow-hidden">
@@ -214,12 +254,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   className={`ml-auto text-xs ${
                     status === "completed" ? "bg-green-100 text-green-700" :
                     status === "in_progress" ? "bg-blue-100 text-blue-700" :
+                    status === "paused" ? "bg-amber-100 text-amber-700" :
+                    status === "stopped" ? "bg-orange-100 text-orange-700" :
                     status === "failed" ? "bg-red-100 text-red-700" :
                     "bg-zinc-100 text-zinc-500"
                   }`}
                 >
                   {status === "completed" ? "已完成" :
                    status === "in_progress" ? "执行中" :
+                   status === "paused" ? "已暂停" :
+                   status === "stopped" ? "已停止" :
                    status === "failed" ? "失败" : "待执行"}
                 </Badge>
               </div>
@@ -227,19 +271,64 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               {/* Step content */}
               <div className="px-5 py-4">
                 <StepContent step={step} projectId={projectId} status={status} isActive={isActive} />
+                <StepArtifactsWrapper projectId={projectId} status={status} result={stepState.result} />
               </div>
 
               {/* Step actions */}
-              {(status === "pending" || status === "failed") && (
+              {(status === "pending" || status === "failed" || status === "stopped") && (
                 <div className="px-5 pb-4 flex justify-end">
                   <Button
                     size="sm"
-                    disabled={!canStart(step) || starting === step}
+                    disabled={!canStart(step) || starting === step || controlLoading[step]}
                     onClick={() => startStep(step)}
                   >
                     {starting === step ? "启动中..." :
+                     controlLoading[step] ? "处理中..." :
                      status === "failed" ? "重试" :
+                     status === "stopped" ? "重新开始" :
                      canStart(step) ? "开始执行" : "等待前序步骤"}
+                  </Button>
+                </div>
+              )}
+
+              {status === "in_progress" && (
+                <div className="px-5 pb-4 flex justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={controlLoading[step]}
+                    onClick={() => pauseStep(step)}
+                  >
+                    {controlLoading[step] ? "处理中..." : "⏸ 暂停"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={controlLoading[step]}
+                    onClick={() => stopStep(step)}
+                  >
+                    {controlLoading[step] ? "处理中..." : "■ 停止"}
+                  </Button>
+                </div>
+              )}
+
+              {status === "paused" && (
+                <div className="px-5 pb-4 flex justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={controlLoading[step]}
+                    onClick={() => resumeStep(step)}
+                  >
+                    {controlLoading[step] ? "处理中..." : "▶ 继续"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={controlLoading[step]}
+                    onClick={() => stopStep(step)}
+                  >
+                    {controlLoading[step] ? "处理中..." : "■ 停止"}
                   </Button>
                 </div>
               )}
@@ -249,7 +338,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 (() => {
                   const nextStep = STEP_ORDER[idx + 1];
                   const nextStatus = steps[nextStep]?.status;
-                  if (nextStatus !== "pending") return null;
+                  if (nextStatus !== "pending" && nextStatus !== "stopped") return null;
                   return (
                     <div className="px-5 pb-4 flex justify-end border-t pt-3">
                       <Button

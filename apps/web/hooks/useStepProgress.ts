@@ -12,12 +12,23 @@ export interface ProgressEvent {
   filename?: string;
 }
 
+export interface ProgressArtifact {
+  shot_id?: string;
+  type: "image" | "audio" | "video" | "text";
+  filename?: string;
+  track?: string;
+  skipped?: boolean;
+}
+
 export interface StepProgress {
   events: ProgressEvent[];
   lastEvent: ProgressEvent | null;
   isComplete: boolean;
+  isPaused: boolean;
+  isStopped: boolean;
   error: string | null;
   percent: number;
+  artifacts: ProgressArtifact[];
 }
 
 export function useStepProgress(
@@ -27,11 +38,16 @@ export function useStepProgress(
 ): StepProgress {
   const [events, setEvents] = useState<ProgressEvent[]>([]);
   const [isComplete, setIsComplete] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [isStopped, setIsStopped] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [artifacts, setArtifacts] = useState<ProgressArtifact[]>([]);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     if (!active || isComplete) return;
+
+    queueMicrotask(() => setArtifacts([]));
 
     const es = new EventSource(`/api/pipeline/${projectId}/${step}/events`);
     esRef.current = es;
@@ -39,6 +55,41 @@ export function useStepProgress(
     es.addEventListener("progress", (e) => {
       const data = JSON.parse(e.data) as ProgressEvent;
       setEvents((prev) => [...prev, data]);
+
+      if (data.shot_id) {
+        const artifactType: ProgressArtifact["type"] =
+          step === "storyboard"
+            ? "text"
+            : step === "image"
+            ? "image"
+            : step === "tts"
+            ? "audio"
+            : step === "video"
+            ? "video"
+            : "text";
+        setArtifacts((prev) => [
+          ...prev,
+          {
+            shot_id: data.shot_id,
+            type: artifactType,
+            filename: data.filename,
+          },
+        ]);
+      }
+    });
+
+    es.addEventListener("paused", () => {
+      setIsPaused(true);
+    });
+
+    es.addEventListener("resumed", () => {
+      setIsPaused(false);
+    });
+
+    es.addEventListener("stopped", () => {
+      setIsStopped(true);
+      setIsComplete(true);
+      es.close();
     });
 
     es.addEventListener("complete", () => {
@@ -67,5 +118,5 @@ export function useStepProgress(
       ? Math.round(((lastEvent.done ?? 0) / lastEvent.total) * 100)
       : 0;
 
-  return { events, lastEvent, isComplete, error, percent };
+  return { events, lastEvent, isComplete, isPaused, isStopped, error, percent, artifacts };
 }

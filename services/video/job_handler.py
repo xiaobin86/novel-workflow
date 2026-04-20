@@ -48,6 +48,7 @@ async def run_generate_clips_job(job: JobRecord, project_id: str, config: dict, 
 
     clips = []
     for shot in shots:
+        await job.check_pause()
         shot_id = shot["shot_id"]
         output_path = clips_dir / f"{shot_id}.mp4"
 

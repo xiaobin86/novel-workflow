@@ -55,12 +55,22 @@ export async function GET(
 
               // Update state.json on terminal events
               if (event === "complete") {
-                await updateStep(projectId, stepName, { status: "completed" });
+                const parsed = JSON.parse(data);
+                await updateStep(projectId, stepName, {
+                  status: "completed",
+                  result: parsed.result ?? null,
+                });
+                done = true;
+              } else if (event === "stopped") {
+                await updateStep(projectId, stepName, { status: "stopped" });
                 done = true;
               } else if (event === "error") {
                 const parsed = JSON.parse(data);
                 if (!parsed.retryable) {
-                  await updateStep(projectId, stepName, { status: "failed" });
+                  await updateStep(projectId, stepName, {
+                    status: "failed",
+                    result: null,
+                  });
                   done = true;
                 }
               }

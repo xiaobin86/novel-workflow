@@ -4,7 +4,7 @@
 > **创建时间**：2026-04-18  
 > **目标**：完成从设计文档到可运行代码的完整实现  
 > **预计总工时**：约 60-70 小时  
-> **最后更新**：2026-04-20
+> **最后更新**：2026-04-20（UI 布局优化 + 状态验证逻辑）
 
 ---
 
@@ -36,6 +36,7 @@
 | WebUI 设计 | `docs/technical/design/07-webui-design.md` | 完整 |
 | 步骤生命周期控制 | `docs/technical/design/08-step-lifecycle-control.md` | 完整 |
 | 步骤产物预览 | `docs/technical/design/09-step-preview.md` | 完整 |
+| 任务生命周期与状态恢复 | `docs/technical/design/10-task-lifecycle-state-recovery.md` | 完整 |
 | 技术架构 | `docs/technical/architecture/001-tech-stack.md` | 完整 |
 | 调研报告 | `docs/research/ui-design/` & `docs/research/ai-services/` | 完整 |
 | PRD — 删除项目 | `docs/product/prd/delete-project.md` | 完整 |
@@ -51,6 +52,9 @@
 - 删除项目功能（feature/delete-project 已合并到 develop）
 - 重新生成功能（feature/regenerate-artifact 已合并到 develop）
 - 磁盘恢复（state.json 缺失时自动从磁盘重建）
+- **状态验证与自动修正**（2026-04-20）：读取 state.json 时自动对比实际文件数量与 storyboard 分镜数，修正状态（completed/stopped/pending）
+- **UI 布局优化**（2026-04-20）：页面宽度 max-w-7xl、图片 6 列网格、分镜/声音 3 列网格、最大 3 行滚动
+- **React 19 兼容性修复**：用 `useParams` 替代 `use()` 避免 fiber 标志位 bug
 
 ---
 

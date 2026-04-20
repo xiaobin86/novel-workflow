@@ -4,7 +4,7 @@
 **端口**：8004  
 **GPU**：必须（Wan2.1-T2V-1.3B，约 16.6GB，需 32GB RAM 作为内存卸载缓冲）  
 **外部依赖**：无（模型本地加载）  
-**前置条件**：tts-service 已完成（需要 `audio_durations.json` 计算视频时长）
+**前置条件**：`images/` 目录中至少存在一个分镜图片（TTS 无依赖）
 
 ---
 
@@ -47,9 +47,12 @@ providers/
     "height": 480,
     "num_frames": 65,
     "num_inference_steps": 30
-  }
+  },
+  "shot_ids": ["E01_003", "E01_005"]
 }
 ```
+
+`shot_ids`：前端按快照传入「有图片但无视频」的分镜列表。`null` 表示处理全部分镜（重新生成全部场景时使用）。
 
 **响应（202）：**
 ```json
@@ -180,23 +183,14 @@ class ReplicateWanProvider(VideoProvider):
 
 ---
 
-## 4. 视频时长计算（核心逻辑）
+## 4. 视频时长计算
 
-这是整个管线最关键的设计之一，避免 TTS 旁白被截断：
+时长直接使用分镜 JSON 中的 `duration` 字段，不依赖 `audio_durations.json`。  
+音画同步由 Assembly 步骤处理。
 
 ```python
-def calculate_clip_duration(shot: dict, audio_durations: dict) -> float:
-    shot_id = shot["shot_id"]
-    declared = shot.get("duration", 4.0)
-
-    # 读取 TTS 实际时长
-    durations = audio_durations.get(shot_id, {})
-    action_dur = durations.get("action", 0.0)
-    dialogue_dur = durations.get("dialogue", 0.0)
-    tts_total = max(action_dur, dialogue_dur)   # 取较长轨道
-
-    # 实际时长 = max(声明时长, TTS 时长 + 0.5s buffer)
-    return max(declared, tts_total + 0.5) if tts_total > 0 else declared
+def get_clip_duration(shot: dict) -> float:
+    return float(shot.get("duration", 4.0))
 ```
 
 ---
@@ -204,44 +198,49 @@ def calculate_clip_duration(shot: dict, audio_durations: dict) -> float:
 ## 5. 核心处理流程
 
 ```python
-async def run_generate_clips_job(job, project_id, config):
+async def run_generate_clips_job(job, project_id, config, shot_ids, provider):
     project_dir = Path(f"/app/projects/{project_id}")
     storyboard = json.loads((project_dir / "storyboard.json").read_text())
-    audio_durations = json.loads((project_dir / "audio_durations.json").read_text())
+    all_shots = storyboard["shots"]
+
+    # 快照式过滤：仅处理前端传来的 shot_ids
+    if shot_ids is not None:
+        shot_id_set = set(shot_ids)
+        shots_to_process = [s for s in all_shots if s["shot_id"] in shot_id_set]
+    else:
+        shots_to_process = all_shots  # 重新生成全部时使用
+
     clips_dir = project_dir / "clips"
     clips_dir.mkdir(exist_ok=True)
+    job.total = len(shots_to_process)
 
-    shots = storyboard["shots"]
-    job.total = len(shots)
-    provider = model_manager.get_provider()  # 按需加载 Wan 模型
-
-    for shot in shots:
+    for shot in shots_to_process:
         shot_id = shot["shot_id"]
         output_path = clips_dir / f"{shot_id}.mp4"
 
-        # 断点续传
+        # ① 断点续传
         if output_path.exists() and output_path.stat().st_size > 0:
             job.done += 1
-            await job.emit_progress(shot_id, skipped=True)
+            await job.emit_progress(shot_id=shot_id, done=job.done, skipped=True)
             continue
 
-        duration = calculate_clip_duration(shot, audio_durations)
+        # ② 图片安全检查（防止快照后图片被删）
+        image_path = find_shot_image(images_dir, shot_id)
+        if image_path is None:
+            await job.emit_error(f"Image not found for shot {shot_id}", shot_id=shot_id, retryable=False)
+            continue
 
+        # ③ 生成（时长来自 storyboard）
+        duration = get_clip_duration(shot)
         try:
-            await provider.generate_clip(
-                shot_id=shot_id,
-                prompt=shot["video_prompt"],
-                output_path=str(output_path),
-                duration_seconds=duration,
-                config=config,
-            )
+            await provider.generate_clip(shot_id, shot["video_prompt"], str(output_path), duration, config)
             job.done += 1
-            await job.emit_progress(shot_id, duration=duration)
+            await job.emit_progress(shot_id=shot_id, done=job.done, message=f"Generated ({duration:.1f}s)")
         except Exception as e:
-            await job.emit_error(shot_id, str(e), retryable=True)
-            continue
+            await job.emit_error(str(e), shot_id=shot_id, retryable=True)
 
-    await job.emit_complete({"clips": [...]})
+    # 本批次完成；validateStepStatuses 在下次 SWR 轮询时根据 image_count vs video_count 确定真实状态
+    await job.emit_complete({"clips": clips, "total": len(shots_to_process)})
 ```
 
 ---
@@ -251,7 +250,7 @@ async def run_generate_clips_job(job, project_id, config):
 | 操作 | 路径 |
 |------|------|
 | 读取分镜 | `/app/projects/{project_id}/storyboard.json` |
-| 读取音频时长 | `/app/projects/{project_id}/audio_durations.json`（tts-service 写入）|
+| 读取图片 | `/app/projects/{project_id}/images/{shot_id}.{png\|jpg\|webp}` |
 | 写入视频片段 | `/app/projects/{project_id}/clips/{shot_id}.mp4` |
 | 模型路径 | `/app/models/Wan2.1-T2V-1.3B/`（只读挂载） |
 
@@ -273,7 +272,7 @@ async def run_generate_clips_job(job, project_id, config):
 | 错误类型 | 处理方式 |
 |---------|---------|
 | CUDA OOM | 单张失败，emit error（retryable），继续下一张 |
-| `audio_durations.json` 缺失 | Job 整体失败，提示先完成 tts-service |
+| 分镜图片不存在 | 该分镜 emit error（retryable=False），跳过继续处理其他分镜 |
 | FFmpeg 冻结帧失败 | 使用原始片段，记录警告 |
 | 模型文件缺失 | health 返回 503 |
 

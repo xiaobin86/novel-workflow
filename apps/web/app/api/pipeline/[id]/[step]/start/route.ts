@@ -21,7 +21,7 @@ export async function POST(
   }
 
   const body = await req.json().catch(() => ({}));
-  const userConfig = body.config ?? {};
+  const userConfig = (body.config as Record<string, unknown>) ?? {};
 
   // Before starting video-service, unload image-service model (GPU handoff)
   if (stepName === "video") {
@@ -48,6 +48,13 @@ export async function POST(
       text,
       episode: state.episode,
       title: state.title,
+    };
+  } else if (stepName === "video") {
+    // Pass the snapshot shot_ids list from the frontend (null = process all)
+    serviceBody = {
+      project_id: projectId,
+      config: { ...(STEP_CONFIGS.video ?? {}), ...userConfig },
+      shot_ids: (body.shot_ids as string[] | undefined) ?? null,
     };
   } else {
     serviceBody.config = { ...(STEP_CONFIGS[stepName] ?? {}), ...userConfig };

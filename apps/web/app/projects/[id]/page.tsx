@@ -149,13 +149,17 @@ function StepArtifactsWrapper({
 }) {
   const show = ["completed", "stopped", "in_progress", "paused"].includes(status);
   if (!show) return null;
-  const hasContent = !!result || (progressArtifacts && progressArtifacts.length > 0);
+  // During active execution, suppress the old persisted result so live progress
+  // artifacts are shown instead (avoids stale artifacts after a step restart).
+  const activelyRunning = ["in_progress", "paused"].includes(status);
+  const displayResult = activelyRunning ? null : result;
+  const hasContent = !!displayResult || (progressArtifacts && progressArtifacts.length > 0);
   if (!hasContent) return null;
   return (
     <div className="mt-4 pt-4 border-t">
       <StepArtifacts
         step={step}
-        result={result}
+        result={displayResult}
         projectId={projectId}
         progressArtifacts={progressArtifacts}
       />

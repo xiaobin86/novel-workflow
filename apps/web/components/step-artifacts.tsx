@@ -83,26 +83,27 @@ export function StoryboardArtifacts({
   );
 }
 
-// ── Shared: regenerate icon ───────────────────────────────────────────────────
+// ── Shared: delete icon ───────────────────────────────────────────────────────
 
-function RegenerateIcon({
+function DeleteIcon({
   onClick,
-  title = "重新生成此项",
+  title = "删除此项",
 }: {
   onClick: (e: React.MouseEvent) => void;
   title?: string;
 }) {
   return (
     <button
-      className="absolute top-1 right-1 p-1 rounded bg-white/80 hover:bg-white shadow text-zinc-400 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
+      className="absolute top-1 right-1 p-1 rounded bg-white/80 hover:bg-white shadow text-zinc-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
       title={title}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(e); }}
     >
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-        <path d="M21 3v5h-5" />
-        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-        <path d="M8 16H3v5" />
+        <polyline points="3 6 5 6 21 6" />
+        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
       </svg>
     </button>
   );
@@ -113,11 +114,11 @@ function RegenerateIcon({
 export function ImageArtifacts({
   result,
   projectId,
-  onRegenerateItem,
+  onDeleteItem,
 }: {
   result: ImageResult;
   projectId: string;
-  onRegenerateItem?: (shot_id: string) => void;
+  onDeleteItem?: (shot_id: string) => void;
 }) {
   if (!result.images?.length) return null;
 
@@ -137,8 +138,8 @@ export function ImageArtifacts({
           <span className="absolute bottom-1 left-1 text-xs bg-black/60 text-white px-1.5 py-0.5 rounded">
             {img.shot_id}
           </span>
-          {onRegenerateItem && (
-            <RegenerateIcon onClick={() => onRegenerateItem(img.shot_id)} />
+          {onDeleteItem && (
+            <DeleteIcon onClick={() => onDeleteItem(img.shot_id)} />
           )}
         </div>
       ))}
@@ -168,11 +169,11 @@ function getTrackLabel(trackType: string): string {
 export function TTSArtifacts({
   result,
   projectId,
-  onRegenerateItem,
+  onDeleteItem,
 }: {
   result: TTSResult;
   projectId: string;
-  onRegenerateItem?: (shot_id: string) => void;
+  onDeleteItem?: (shot_id: string) => void;
 }) {
   if (!result.audio_files?.length) return null;
 
@@ -188,17 +189,18 @@ export function TTSArtifacts({
               <p className="text-sm font-medium text-zinc-700">
                 {shotId} · {trackLabel}
               </p>
-              {onRegenerateItem && (
+              {onDeleteItem && (
                 <button
-                  className="p-1 rounded text-zinc-400 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100"
-                  title="重新生成此项"
-                  onClick={() => onRegenerateItem(shotId)}
+                  className="p-1 rounded text-zinc-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                  title="删除此项"
+                  onClick={() => onDeleteItem(shotId)}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                    <path d="M21 3v5h-5" />
-                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                    <path d="M8 16H3v5" />
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6" />
+                    <path d="M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
                   </svg>
                 </button>
               )}
@@ -221,11 +223,11 @@ export function TTSArtifacts({
 export function VideoArtifacts({
   result,
   projectId,
-  onRegenerateItem,
+  onDeleteItem,
 }: {
   result: VideoResult;
   projectId: string;
-  onRegenerateItem?: (shot_id: string) => void;
+  onDeleteItem?: (shot_id: string) => void;
 }) {
   if (!result.clips?.length) return null;
 
@@ -248,8 +250,8 @@ export function VideoArtifacts({
             </span>
             <span className="text-xs text-zinc-500">{clip.duration}s</span>
           </div>
-          {onRegenerateItem && (
-            <RegenerateIcon onClick={() => onRegenerateItem(clip.shot_id)} />
+          {onDeleteItem && (
+            <DeleteIcon onClick={() => onDeleteItem(clip.shot_id)} />
           )}
         </div>
       ))}
@@ -396,13 +398,13 @@ export function StepArtifacts({
   result,
   projectId,
   progressArtifacts,
-  onRegenerateItem,
+  onDeleteItem,
 }: {
   step: StepName;
   result?: StepResult | null;
   projectId: string;
   progressArtifacts?: ProgressArtifact[];
-  onRegenerateItem?: (shot_id: string) => void;
+  onDeleteItem?: (shot_id: string) => void;
 }) {
   // 完成状态：使用持久化的 result
   if (result) {
@@ -410,11 +412,11 @@ export function StepArtifacts({
       case "storyboard":
         return <StoryboardArtifacts projectId={projectId} />;
       case "image":
-        return <ImageArtifacts result={result.data} projectId={projectId} onRegenerateItem={onRegenerateItem} />;
+        return <ImageArtifacts result={result.data} projectId={projectId} onDeleteItem={onDeleteItem} />;
       case "tts":
-        return <TTSArtifacts result={result.data} projectId={projectId} onRegenerateItem={onRegenerateItem} />;
+        return <TTSArtifacts result={result.data} projectId={projectId} onDeleteItem={onDeleteItem} />;
       case "video":
-        return <VideoArtifacts result={result.data} projectId={projectId} onRegenerateItem={onRegenerateItem} />;
+        return <VideoArtifacts result={result.data} projectId={projectId} onDeleteItem={onDeleteItem} />;
       case "assembly":
         return <AssemblyArtifacts result={result.data} projectId={projectId} />;
       default:

@@ -204,5 +204,82 @@ docker compose up -d tts-service
 
 ---
 
+## BUG-004: video-service Docker 容器 subprocess 黑盒、缺少冷却、配置不足
+
+**日期**: 2026-04-20  
+**涉及模块**: `services/video/`（Docker 容器内 Wan2.1 subprocess 调用）  
+**关键词**: `#docker` `#video-service` `#subprocess` `#wan2.1` `#pipe-deadlock` `#oom` `#shm_size`
+
+### 现象
+- video-service 在 Docker 中运行后，点击"生成视频"无响应或超时
+- Docker 日志中看不到 Wan generate.py 的任何输出（黑盒）
+- 偶发 CUDA OOM，尤其是在连续生成多个 shot 时
+- 容器内 `/dev/shm` 不足导致 PyTorch IPC 警告
+
+### 根因（多层叠加）
+
+**第一层：subprocess 输出黑盒**
+- `wan_local.py` 使用 `stdout=PIPE, stderr=PIPE` 捕获输出，但生成完成后仅检查 returncode，未将输出写入日志
+- Docker 容器中无法查看 generate.py 的实时输出，排错极其困难
+- 长时间运行的 subprocess（~5 分钟）若输出量过大，PIPE 缓冲区存在理论上的 deadlock 风险
+
+**第二层：缺少 shot 间冷却**
+- MVP 验证脚本 `batch_generate_wan.py` 明确有 `time.sleep(5)` 段间冷却
+- 当前 `job_handler.py` 连续调用 `provider.generate_clip()`，GPU 显存未完全释放即启动下一个 shot
+- 12GB VRAM 环境下连续生成 10 个 shot 容易触发 OOM
+
+**第三层：Docker 配置不足**
+- `docker-compose.yml` 中 video-service 缺少 `shm_size`（PyTorch 需要共享内存做 IPC）
+- 缺少 `CUDA_LAUNCH_BLOCKING=1` 和 `PYTORCH_CUDA_ALLOC_CONF`（image-service 已配置，video-service 遗漏）
+- Dockerfile 未设置 `PYTHONUNBUFFERED=1`，日志可能缓冲不实时
+
+**第四层：参数未调优**
+- Wan2.1 README 明确推荐 T2V-1.3B 使用 `--sample_guide_scale 6`，当前未设置
+- 输出文件仅检查 `size > 0`，MVP 经验表明应检查 `> 1000` 字节以过滤损坏文件
+
+### 排查过程
+1. 对比 MVP 脚本 `batch_generate_wan.py` 与当前 `wan_local.py`，发现输出处理和冷却逻辑缺失
+2. 检查 `docker-compose.yml`，发现 video-service 的 GPU 相关配置比 image-service 少
+3. 检查 Wan2.1 `pyproject.toml` 和 README，发现 `--sample_guide_scale 6` 推荐值未应用
+4. 验证 `flash_attn` 为可选依赖（try/except 回退到 `scaled_dot_product_attention`）
+
+### 最终解决方案
+
+**文件变更**（5 个文件）：
+
+1. `services/video/providers/wan_local.py`
+   - subprocess 完成后将 stdout/stderr 逐行写入 logger（Docker 可见）
+   - 添加 `proc = None` 作用域安全防护
+   - 超时后 `try/except` 包裹 `proc.kill()`，防止清理异常吞掉原始错误
+   - 添加 `_classify_error()` 解析 stderr：CUDA OOM / checkpoint 缺失 / 依赖缺失
+   - 添加 `--sample_guide_scale 6`
+   - 输出文件大小阈值从 `> 0` 提升到 `> 1024` 字节
+
+2. `services/video/job_handler.py`
+   - shot 循环结束后添加 `asyncio.sleep(SHOT_COOLDOWN_SECONDS)`（默认 5s）
+   - 增强 shot 级别日志（开始、成功、冷却）
+
+3. `services/video/Dockerfile`
+   - 添加 `ENV PYTHONUNBUFFERED=1`
+
+4. `services/video/requirements.txt`
+   - 添加 `numpy>=1.23.5`（Wan2.1 运行时依赖）
+
+5. `docker-compose.yml`
+   - video-service 添加 `shm_size: "4gb"`
+   - 添加 `PYTHONUNBUFFERED: "1"`
+   - 添加 `CUDA_LAUNCH_BLOCKING: "1"`
+   - 添加 `PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"`
+
+### 预防建议
+
+1. **Subprocess 输出不可黑盒**：所有 subprocess 调用完成后必须将 stdout/stderr 写入 logger，Docker 排错依赖此输出
+2. **GPU 密集型服务配置对齐**：image-service 和 video-service 的 `shm_size`、`CUDA_LAUNCH_BLOCKING`、`PYTORCH_CUDA_ALLOC_CONF` 必须保持一致
+3. **参考 MVP 脚本**：batch_generate_* 脚本中的冷却、验证、日志逻辑应同步到 Docker service 实现
+4. **参数紧跟上游文档**：Wan2.1、FLUX 等模型的 README 推荐参数应定期同步到 provider 实现
+5. **Docker 重建验证**：修改 `docker-compose.yml` 或 `Dockerfile` 后必须执行 `docker compose build video-service && docker compose up -d video-service`
+
+---
+
 *最后更新：2026-04-20*  
 *维护者：Sisyphus Agent*

@@ -1,227 +1,265 @@
 # 12 — 图片就绪即启动视频生成：技术设计
 
 **对应 PRD**: `docs/product/prd/incremental-video-generation.md`  
-**状态**: 草稿，待评审  
+**状态**: ✅ 已确认，待开发  
 **创建日期**: 2026-04-20  
 
 ---
 
-## 一、整体思路
+## 一、设计目标（最终确认版）
 
-本特性的核心是将视频步骤的启动条件从「所有图片已完成」改为「至少有一张图片存在（磁盘真实来源）」，并在视频服务内部逐镜头检查图片是否就绪，跳过尚未就绪的分镜。
-
-变更涉及三个层次：
-
-```
-前端 UI               后端 Next.js 接口层       Python 视频服务
-────────────────      ──────────────────────    ──────────────────
-canStart("video")     readState() 返回           job_handler.py 逐镜头
-  基于 file_counts  ← file_counts.image（磁盘）  检查图片 + 跳过逻辑
-```
-
----
-
-## 二、前端 canStart 判断（方案 C：真实磁盘来源）
-
-### 2.1 问题
-
-当前 `canStart("video")` 是纯同步的：
-
-```typescript
-if (step === "video") {
-  return allSteps.image?.status === "completed"
-      && allSteps.tts?.status === "completed";
-}
-```
-
-`status` 来自 state.json，是持久化状态，**不反映实际磁盘文件数**。需要引入真实文件数量。
-
-### 2.2 方案选型
-
-**方案 C-1（推荐）：augment readState 响应，复用现有轮询通道**
-
-将 `file_counts` 作为**计算字段**（不写入 state.json）附在 `/api/projects/{id}/state` 的响应里。`readState()` 在返回前扫描一次 `images/` 目录，得到文件数。
-
-```
-优点：
-  ✓ 真实磁盘来源（每次轮询都扫一次）
-  ✓ 复用已有的 5s SWR 轮询，无额外 roundtrip
-  ✓ canStart 保持同步
-  ✓ 不污染 state.json
-
-缺点：
-  - readState 响应结构变化（需兼容旧客户端，加为可选字段）
-  - 每 5s 多一次目录扫描（images/ 通常 < 100 个文件，开销可忽略）
-```
-
-**方案 C-2：独立 `/api/projects/{id}/file-counts` 端点**
-
-前端在 mount 时和每次 canStart 前单独请求：
-
-```typescript
-const canVideoStart = async () => {
-  const { image } = await fetch(`/api/projects/${id}/file-counts`).then(r => r.json());
-  return image > 0;
-};
-```
-
-```
-优点：
-  ✓ 职责独立，不侵入 readState
-
-缺点：
-  - canStart 变为异步，UI 需要额外状态管理
-  - 按钮 disabled/enabled 需要在请求返回后才能确定
-  - 多一个 API 端点需要维护
-```
-
-**结论：采用方案 C-1**
-
-C-1 在保持真实磁盘来源的同时，不引入异步复杂度，复用已有通道。C-2 在这个场景下得不偿失。
+| 维度 | 设计决策 |
+|---|---|
+| **启动条件** | `pending_shots`（有图片但无视频的分镜）数量 > 0 |
+| **按钮语义** | 点击 = 生成「当前所有有图片但无视频的分镜」，快照式，不跟踪后续新增图片 |
+| **后端简化** | 前端把待生成的 `shot_ids` 列表传给后端，后端只处理这个列表 |
+| **完成判定** | `video_count >= image_count`（不是 `>= 全部分镜数`） |
+| **批次结束** | 一批生成完后（成功或失败），前端 SWR 重新计算 pending，按钮恢复可点 |
+| **时长来源** | `storyboard.json` 的 `shot.duration` 字段，不读 `audio_durations.json` |
+| **TTS 依赖** | 完全移除，视频步骤独立于 TTS |
 
 ---
 
-## 三、接口层变更
+## 二、状态层：`readState` 返回 shot 级文件信息
 
-### 3.1 `ProjectState` 增加计算字段
+### 2.1 新增接口类型
 
 **`apps/web/lib/project-store.ts`**
 
 ```typescript
-// 新增，不持久化到 state.json
-export interface FileCounts {
-  image: number;   // images/ 目录中的有效图片文件数
-  tts: number;     // audio/ 目录中的 .mp3 文件数
-  video: number;   // clips/ 目录中的 .mp4 文件数
+/** 磁盘实际文件状态，计算字段，不持久化到 state.json */
+export interface ShotFileCounts {
+  image_shots: string[];   // images/ 中存在的 shot_id 列表（已去扩展名）
+  video_shots: string[];   // clips/ 中存在的 shot_id 列表（已去 .mp4）
 }
 
 export interface ProjectState {
-  project_id: string;
-  title: string;
-  episode: string;
-  created_at: string;
-  steps: Record<StepName, StepState>;
-  file_counts?: FileCounts;   // ← 新增，计算字段，不写入 state.json
+  // ...现有字段不变...
+  shot_file_counts?: ShotFileCounts;  // ← 新增，计算字段
 }
 ```
 
-### 3.2 `readState()` 尾部扫描
-
-在 `readState()` 返回前，扫描三个目录拿到文件数：
+### 2.2 `computeShotFileCounts()`
 
 ```typescript
-// apps/web/lib/project-store.ts — readState() 末尾新增
-async function computeFileCounts(id: string): Promise<FileCounts> {
+async function computeShotFileCounts(id: string): Promise<ShotFileCounts> {
   const dir = projectDir(id);
-  const [imgFiles, audioFiles, clipFiles] = await Promise.all([
+  const [imgFiles, clipFiles] = await Promise.all([
     fs.readdir(path.join(dir, "images")).catch(() => [] as string[]),
-    fs.readdir(path.join(dir, "audio")).catch(() => [] as string[]),
     fs.readdir(path.join(dir, "clips")).catch(() => [] as string[]),
   ]);
   return {
-    image: imgFiles.filter(f => /\.(png|jpg|webp)$/i.test(f)).length,
-    tts:   audioFiles.filter(f => /\.mp3$/i.test(f)).length,
-    video: clipFiles.filter(f => /\.mp4$/i.test(f)).length,
+    image_shots: imgFiles
+      .filter(f => /\.(png|jpg|webp)$/i.test(f))
+      .map(f => f.replace(/\.[^.]+$/, "")),     // E01_001.png → E01_001
+    video_shots: clipFiles
+      .filter(f => /\.mp4$/i.test(f))
+      .map(f => f.replace(/\.mp4$/i, "")),       // E01_001.mp4 → E01_001
   };
 }
+```
 
-// readState() 最后：
+### 2.3 `readState()` 末尾附加
+
+```typescript
 export async function readState(id: string): Promise<ProjectState> {
-  // ... 现有逻辑 ...
+  // ...现有逻辑...
 
-  // 附加计算字段（不写入 state.json）
-  state.file_counts = await computeFileCounts(id);
+  // 附加 shot 级文件信息（不写入 state.json，每次读取时实时计算）
+  state.shot_file_counts = await computeShotFileCounts(id);
   return state;
 }
 ```
 
-> **注意**：`computeFileCounts` 在 `validateStepStatuses` 之后执行，不影响状态校验逻辑。`file_counts` 仅存在于内存中的返回值，不写入磁盘。
+### 2.4 `validateStepStatuses` — video 步骤完成判定变更
 
-### 3.3 前端 `canStart("video")` 变更
+原逻辑：`video_count >= storyboard_shot_count` → completed  
+**新逻辑**：`video_count >= image_count` → completed
+
+```typescript
+// validateStepStatuses 内，处理 video 步骤时：
+if (step === "video") {
+  const videoCount = (result.data as VideoResult).clips?.length ?? 0;
+  // 取真实图片数（real source，非 state 近似）
+  const imgFiles = await fs.readdir(path.join(dir, "images")).catch(() => [] as string[]);
+  const imageCount = imgFiles.filter(f => /\.(png|jpg|webp)$/i.test(f)).length;
+
+  const expectedStatus: StepStatus =
+    imageCount === 0       ? "pending"
+    : videoCount === 0    ? "pending"
+    : videoCount >= imageCount ? "completed"
+    : "stopped";
+
+  if (currentStatus !== expectedStatus && currentStatus !== "in_progress") {
+    state.steps[step].status = expectedStatus;
+    // ...
+  }
+}
+```
+
+> **注意**：`validateStepStatuses` 中已有 `if (currentStatus === "in_progress") continue` 的保护（BUG-004 修复），video 步骤运行中不会被干扰。
+
+---
+
+## 三、前端层：`canStart` 与启动参数
+
+### 3.1 pending_shots 计算（在组件内）
 
 **`apps/web/app/projects/[id]/page.tsx`**
 
 ```typescript
-// state 类型已包含 file_counts（可选）
-const imageCount = state?.file_counts?.image ?? 0;
+// 在 ProjectPage 组件或传入 StepCard 的位置计算：
+const imageShotSet = new Set(state?.shot_file_counts?.image_shots ?? []);
+const videoShotSet = new Set(state?.shot_file_counts?.video_shots ?? []);
+const pendingVideoShots = [...imageShotSet].filter(id => !videoShotSet.has(id));
+// pendingVideoShots: 有图片但无视频的 shot_id 列表
+```
 
-function canStart(): boolean {
-  // ...
-  if (step === "video") {
-    // 方案 C：基于真实磁盘文件数，不依赖 status 近似
-    return imageCount > 0;
-    // 注：TTS 依赖已移除（分镜视频时长使用 storyboard.duration）
-  }
-  // ...
+### 3.2 `canStart("video")` 条件
+
+```typescript
+if (step === "video") {
+  // 方案 C：真实磁盘来源（通过 state.shot_file_counts）
+  return pendingVideoShots.length > 0;
 }
 ```
 
-`imageCount` 通过 `useProjectState` 的 SWR 轮询自动更新，无需额外 hook。
+取消原有的 `tts.status === "completed"` 和 `image.status === "completed"` 依赖。
+
+### 3.3 `startStep` 传参变更
+
+```typescript
+async function startStep(step: StepName) {
+  setStarting(step);
+  try {
+    const body: Record<string, unknown> = {};
+    if (step === "video") {
+      // 快照式：点击时把当前 pending_shots 传给后端
+      body.shot_ids = pendingVideoShots;
+    }
+    await fetch(`/api/pipeline/${projectId}/${step}/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    await mutate();
+  } finally {
+    setStarting(null);
+  }
+}
+```
+
+### 3.4 按钮文案
+
+| 状态 | 按钮文案 |
+|---|---|
+| video=pending，pendingVideoShots>0 | `开始执行` |
+| video=stopped，pendingVideoShots>0 | `继续生成（N 个）` |
+| video=stopped，pendingVideoShots=0 | 不显示（此时 completed） |
+| video=completed | 不显示 |
+
+```typescript
+// StepCard 按钮 label 调整（video 步骤专用）：
+const label =
+  step === "video" && pendingVideoShots.length > 0
+    ? status === "stopped"
+      ? `继续生成（${pendingVideoShots.length} 个）`
+      : "开始执行"
+    : status === "stopped" ? "重新开始"
+    : "开始执行";
+```
 
 ---
 
-## 四、后端 video-service 变更
+## 四、接口层：start route 透传 shot_ids
 
-### 4.1 去掉 `audio_durations.json` 强依赖
+**`apps/web/app/api/pipeline/[id]/[step]/start/route.ts`**
 
-**`services/video/job_handler.py`**
-
-```python
-# 删除：
-dur_path = project_dir / "audio_durations.json"
-if not dur_path.exists():
-    raise FileNotFoundError("audio_durations.json not found — run tts-service first")
-audio_durations = json.loads(dur_path.read_text(encoding="utf-8"))
-
-# 替换为：
-# 时长直接从分镜 JSON 读取，audio_durations.json 不再是前置条件
-# 分镜视频时长 = storyboard shot.duration（Assembly 步骤负责音画同步）
+```typescript
+// 在构建 serviceBody 时，video 步骤透传 shot_ids
+if (stepName === "video") {
+  serviceBody = {
+    project_id: projectId,
+    config: { ...(STEP_CONFIGS.video ?? {}) },
+    shot_ids: (userConfig.shot_ids as string[]) ?? null,  // 透传给 video-service
+  };
+} else {
+  serviceBody.config = { ...(STEP_CONFIGS[stepName] ?? {}), ...userConfig };
+}
 ```
 
-新的时长函数：
+---
+
+## 五、后端层：video-service
+
+### 5.1 `POST /jobs` 请求体扩展
+
+**`services/video/main.py`**
 
 ```python
-def _get_clip_duration(shot: dict) -> float:
-    """分镜视频时长：使用分镜 JSON 声明的时长（Assembly 负责音画同步）。"""
-    return float(shot.get("duration", 4.0))
+class StartJobRequest(BaseModel):
+    project_id: str
+    config: dict = {}
+    shot_ids: list[str] | None = None   # ← 新增，None 表示生成全部待处理分镜
 ```
 
-### 4.2 逐镜头图片检查
-
-新增图片查找函数：
+### 5.2 `job_handler.py` 全量重构
 
 ```python
+import json, logging, os, traceback
+from pathlib import Path
+from shared.job_manager import JobRecord
+from providers.base import VideoProvider
+
+logger = logging.getLogger(__name__)
+PROJECTS_BASE = os.getenv("PROJECTS_BASE_DIR", "/app/projects")
 IMAGE_EXTENSIONS = ["png", "jpg", "webp"]
+DEFAULT_CONFIG = {"width": 832, "height": 480, "num_frames": 65, "num_inference_steps": 30}
+
 
 def find_shot_image(images_dir: Path, shot_id: str) -> Path | None:
-    """查找分镜对应的图片文件（支持 png/jpg/webp）。"""
+    """查找分镜对应图片（支持 png/jpg/webp）。"""
     for ext in IMAGE_EXTENSIONS:
         p = images_dir / f"{shot_id}.{ext}"
         if p.exists() and p.stat().st_size > 0:
             return p
     return None
-```
 
-### 4.3 主循环重构
 
-```python
-async def run_generate_clips_job(job: JobRecord, project_id: str, config: dict, provider: VideoProvider):
+def get_clip_duration(shot: dict) -> float:
+    """分镜视频时长 = storyboard 声明的 duration（Assembly 负责音画同步）。"""
+    return float(shot.get("duration", 4.0))
+
+
+async def run_generate_clips_job(
+    job: JobRecord,
+    project_id: str,
+    config: dict,
+    shot_ids: list[str] | None,
+    provider: VideoProvider,
+):
     project_dir = Path(PROJECTS_BASE) / project_id
+    storyboard = json.loads(
+        (project_dir / "storyboard.json").read_text(encoding="utf-8-sig")
+    )
+    all_shots = storyboard["shots"]
 
-    storyboard = json.loads((project_dir / "storyboard.json").read_text(encoding="utf-8-sig"))
-    shots = storyboard["shots"]
+    # 只处理前端传来的 shot_ids（快照式）；None 时处理全部分镜
+    if shot_ids is not None:
+        shot_id_set = set(shot_ids)
+        shots_to_process = [s for s in all_shots if s["shot_id"] in shot_id_set]
+    else:
+        shots_to_process = all_shots
 
     images_dir = project_dir / "images"
     clips_dir  = project_dir / "clips"
     clips_dir.mkdir(exist_ok=True)
 
     cfg = {**DEFAULT_CONFIG, **config}
-    job.total = len(shots)
-
+    job.total = len(shots_to_process)
     clips = []
-    skipped_no_image = []   # 图片未就绪被跳过的 shot_id 列表
 
-    for shot in shots:
+    for shot in shots_to_process:
         job.check_stop()
         shot_id   = shot["shot_id"]
         output    = clips_dir / f"{shot_id}.mp4"
@@ -236,18 +274,17 @@ async def run_generate_clips_job(job: JobRecord, project_id: str, config: dict, 
             clips.append({"shot_id": shot_id, "filename": f"{shot_id}.mp4"})
             continue
 
-        # ② 图片未就绪 → 跳过，记录
+        # ② 图片安全检查（防止文件在快照后被删）
         image_path = find_shot_image(images_dir, shot_id)
         if image_path is None:
-            skipped_no_image.append(shot_id)
-            await job.emit_progress(
-                shot_id=shot_id, done=job.done,
-                message="Skipped (image not ready)", skipped=True, reason="image_not_ready",
+            await job.emit_error(
+                f"Image not found for shot {shot_id}",
+                shot_id=shot_id, retryable=False,
             )
             continue
 
-        # ③ 正常生成
-        duration = _get_clip_duration(shot)
+        # ③ 生成视频
+        duration = get_clip_duration(shot)
         try:
             await provider.generate_clip(
                 shot_id=shot_id,
@@ -261,133 +298,96 @@ async def run_generate_clips_job(job: JobRecord, project_id: str, config: dict, 
                 shot_id=shot_id, done=job.done,
                 message=f"Generated clip ({duration:.1f}s)", skipped=False,
             )
-            clips.append({"shot_id": shot_id, "filename": f"{shot_id}.mp4", "duration": duration})
+            clips.append({
+                "shot_id": shot_id,
+                "filename": f"{shot_id}.mp4",
+                "duration": duration,
+            })
         except Exception as exc:
             logger.error(f"generate_clip failed for {shot_id}: {exc}\n{traceback.format_exc()}")
             await job.emit_error(str(exc), shot_id=shot_id, retryable=True)
 
-    # ── 结束判断 ──────────────────────────────────────────────────────────────
-    if skipped_no_image:
-        # 部分完成：有分镜图片未就绪，主动以 stopped 状态结束
-        await job.emit_partial_stop(
-            skipped_shots=skipped_no_image,
-            clips=clips,
-            message=f"{len(skipped_no_image)} shot(s) skipped (image not ready): {skipped_no_image}",
-        )
-    else:
-        await job.emit_complete({"clips": clips, "total": len(shots)})
+    # 本批次完成（成功或部分失败）
+    await job.emit_complete({"clips": clips, "total": len(shots_to_process)})
+    # validateStepStatuses 会在下次 readState 时根据 image_count vs video_count
+    # 自动计算真实完成状态（completed / stopped）
 ```
 
-### 4.4 `JobRecord.emit_partial_stop()`
-
-**`services/shared/job_manager.py`** — 在 `JobRecord` 类中新增：
+### 5.3 `main.py` 传参更新
 
 ```python
-async def emit_partial_stop(self, skipped_shots: list[str], clips: list[dict], message: str = ""):
-    """
-    Job 主动以 stopped 状态结束（区别于外部 stop() 调用）。
-    用于「有分镜因条件未满足被跳过」的场景。
-    """
-    self.status = JobStatus.CANCELLED   # 复用 CANCELLED（对应前端 stopped 状态）
-    self._touch()
-    await self._broadcast("stopped", {
-        "message": message,
-        "done": self.done,
-        "total": self.total,
-        "skipped_shots": skipped_shots,
-        "clips": clips,
-    })
-    await self._broadcast("__done__", {})
-```
-
-> **说明**：`JobStatus.CANCELLED` 在前端映射为 `stopped` 状态（通过 `events/route.ts` 监听 `stopped` SSE 事件后调用 `updateStep(..., { status: "stopped" })`）。此处复用该映射，不需要新增状态枚举。
-
----
-
-## 五、数据流时序
-
-```
-用户点击「开始执行」视频步骤
-  │
-  ├─ SWR state 包含 file_counts.image = 5（已有 5 张图）
-  ├─ canStart("video") = true（5 > 0）
-  │
-  ↓ POST /api/pipeline/{id}/video/start
-  ↓ → POST http://video-service:8004/jobs
-  ↓ ← job_id: "abc123"
-  ↓ → updateStep("video", { status: "in_progress", job_id })
-  │
-  ↓ GET /api/pipeline/{id}/video/events（SSE）
-  │
-  ├─ E01_001: image 存在 → 生成视频 → emit progress ✓
-  ├─ E01_002: image 存在 → 生成视频 → emit progress ✓
-  ├─ E01_003: image 不存在 → 跳过 → emit progress (skipped, reason=image_not_ready)
-  ├─ ...
-  │
-  ├─ [若所有 image 都就绪]
-  │     └─ emit complete → events/route.ts → updateStep("video", "completed")
-  │
-  └─ [若有 image 未就绪]
-        └─ emit stopped → events/route.ts → updateStep("video", "stopped")
-           → 前端显示「重新开始」
-           → 用户图片全部完成后点击重新开始 → 补充生成剩余片段
+@app.post("/jobs", status_code=202)
+async def start_job(req: StartJobRequest):
+    from job_handler import run_generate_clips_job
+    provider = get_provider()
+    job = await job_manager.submit(
+        req.project_id,
+        lambda job: run_generate_clips_job(
+            job, req.project_id, req.config,
+            req.shot_ids,   # ← 透传
+            provider,
+        ),
+    )
+    return {"job_id": job.job_id, "status": job.status.value}
 ```
 
 ---
 
-## 六、`events/route.ts` 变更分析
+## 六、完成状态流转
 
-**无需修改**。当前代码已处理 `stopped` 事件：
-
-```typescript
-} else if (event === "stopped") {
-  await updateStep(projectId, stepName, { status: "stopped" });
-  done = true;
-}
 ```
+用户点击「开始执行」→ 传入 pending_shots = ["E01_003", "E01_005"]
+  │
+  └─ 视频服务只处理这 2 个分镜
+     ├─ E01_003：生成成功 ✓
+     └─ E01_005：生成成功 ✓
+         ↓
+     emit complete（本批次完成）
+         ↓
+  events/route.ts → updateStep("video", { status: "completed" })
+         ↓
+  下次 SWR 轮询 → readState → validateStepStatuses：
+    image_count = 10, video_count = 7
+    7 < 10 → 修正为 "stopped"
+         ↓
+  前端：video=stopped，pendingVideoShots = 3 个
+  按钮显示「继续生成（3 个）」
 
-`emit_partial_stop` 发出的也是 `stopped` 事件，逻辑完全兼容。
+（图片全部完成后再次点击）
+         ↓
+  video_count = 10, image_count = 10 → "completed"
+```
 
 ---
 
-## 七、`validateStepStatuses` 影响分析
+## 七、变更文件汇总
 
-当前 `validateStepStatuses` 在每次 `readState` 时对 video 步骤的校验逻辑：
-
-```typescript
-case "video":
-  actualCount = (result.data as VideoResult).clips?.length ?? 0;
-// expectedStatus: actualCount >= shotCount ? "completed" : "stopped"
-```
-
-**无需修改**。逻辑仍然正确：
-- 视频全部完成 → `completed`
-- 视频部分完成（因图片未就绪被跳过）→ `stopped`
-- 视频 0 个 → `pending`（回退）
-
----
-
-## 八、变更文件汇总
-
-| 文件 | 变更内容 | 行数估计 |
+| 文件 | 变更内容 | 估计行数 |
 |---|---|---|
-| `services/shared/job_manager.py` | 新增 `JobRecord.emit_partial_stop()` | +15 行 |
-| `services/video/job_handler.py` | 去掉 audio_durations；新增图片检查；主循环重构 | 改动 ~40 行 |
-| `apps/web/lib/project-store.ts` | 新增 `FileCounts` 接口；`computeFileCounts()`；`readState` 末尾附加 | +25 行 |
-| `apps/web/app/projects/[id]/page.tsx` | `canStart("video")` 条件改为 `imageCount > 0` | 改动 ~5 行 |
-| `docs/technical/design/05-service-video.md` | 更新前置条件描述 | ~10 行 |
+| `apps/web/lib/project-store.ts` | 新增 `ShotFileCounts` 接口、`computeShotFileCounts()`、`readState` 附加调用、`validateStepStatuses` video 完成判定 | +40 行 |
+| `apps/web/app/projects/[id]/page.tsx` | `pendingVideoShots` 计算、`canStart("video")` 条件、`startStep` 传参、按钮文案 | +20 行 |
+| `apps/web/app/api/pipeline/[id]/[step]/start/route.ts` | video 步骤透传 `shot_ids` | +8 行 |
+| `services/video/main.py` | `StartJobRequest` 新增 `shot_ids` 字段、`start_job` 传参 | +5 行 |
+| `services/video/job_handler.py` | 完整重构：去掉 audio_durations 依赖、接受 shot_ids 过滤、图片安全检查、时长直接用 duration | 改动 ~50 行 |
+| `docs/technical/design/05-service-video.md` | 更新前置条件、时序图 | ~10 行 |
+
+**不需要改动**：
+- `services/shared/job_manager.py`（不需要 `emit_partial_stop`，由 `validateStepStatuses` 自动修正）
+- `apps/web/app/api/pipeline/[id]/[step]/events/route.ts`（`stopped` 事件已处理）
 
 ---
 
-## 九、风险与取舍
+## 八、与旧设计的对比
 
-| 风险 | 影响 | 缓解 |
+| 维度 | 旧设计（v1.0 草稿） | 新设计（v1.1 确认版） |
 |---|---|---|
-| `computeFileCounts` 每 5s 扫描目录 | CPU/IO 轻微增加 | 三次 `readdir` 并行，images/ < 200 文件，可忽略 |
-| 视频时长使用 `duration` 字段而非实际音频时长 | 视频片段时长与对白时长可能有误差 | Assembly 步骤负责对齐，这是设计决策而非 bug |
-| `emit_partial_stop` 复用 CANCELLED 状态 | 无语义问题（前端统一映射为 stopped） | 可在后续 sprint 引入 PARTIAL_STOPPED 枚举，当前兼容 |
-| 视频步骤进入 stopped 后用户需手动重启 | 用户操作增加一步 | 有「重新开始」按钮，断点续传已支持；属于已接受的设计取舍 |
+| 前端判断来源 | `state.file_counts.image`（数量） | `state.shot_file_counts`（shot_id 列表） |
+| pending shots | 前端无法得知具体是哪些 | 前端自己 diff 得到，直接传给后端 |
+| 后端接口 | 后端自己扫描图片目录 | 前端传 `shot_ids`，后端直接处理 |
+| 图片未就绪处理 | 跳过 + `emit_partial_stop` | 不存在此场景（前端传的就是有图片的列表） |
+| `job_manager.py` | 需新增 `emit_partial_stop()` | **无需改动** |
+| 完成判定 | `video_count >= storyboard_shot_count` | `video_count >= image_count` |
 
 ---
 
-*技术文档版本：v1.0（待评审，评审通过后开发）*
+*技术文档版本：v1.1（与用户确认，等待「可以开发了」指令后开始实现）*

@@ -5,19 +5,22 @@ Why subprocess (not direct import):
   - Wan2.1 original format requires sys.path.insert to the model repo
   - subprocess isolates the process; force-kill on timeout is clean
   - Semaphore enforces single-GPU usage at all times
+
+Lessons from batch_generate_wan.py (MVP):
+  - Stream output to logs for Docker visibility (don't hide in PIPE)
+  - 5s cooldown between shots prevents OOM
+  - Validate output file size > 1KB (not just > 0)
+  - sample_guide_scale=6 recommended by Wan2.1 README for T2V-1.3B
 """
 import asyncio
 import logging
 import os
-import shutil
-import tempfile
 
 from .base import VideoProvider
 
 logger = logging.getLogger(__name__)
 
 MODEL_PATH = os.getenv("WAN_MODEL_PATH", "/app/models/Wan2.1-T2V-1.3B")
-# generate.py 在 Wan2.1 仓库目录，不在模型目录
 WAN_REPO_PATH = os.getenv("WAN_REPO_PATH", "/app/wan-repo")
 GENERATE_SCRIPT = os.path.join(WAN_REPO_PATH, "generate.py")
 GENERATE_TIMEOUT = int(os.getenv("WAN_GENERATE_TIMEOUT", "600"))
@@ -26,6 +29,9 @@ ANIME_PREFIX = (
     "Anime Chinese manhua style, cel-shaded, flat colors, "
     "2D animation, clean lineart. "
 )
+
+# Minimum valid output file size (bytes). Corrupted/empty files are usually < 1KB.
+_MIN_FILE_SIZE = 1024
 
 # Global semaphore: only one Wan inference at a time
 _sem = asyncio.Semaphore(1)
@@ -48,53 +54,97 @@ class WanLocalProvider(VideoProvider):
 
         tmp_path = output_path + ".tmp.mp4"
 
+        cmd = [
+            "python", GENERATE_SCRIPT,
+            "--task", "t2v-1.3B",
+            "--size", f"{width}*{height}",
+            "--ckpt_dir", MODEL_PATH,
+            "--offload_model", "True",
+            "--t5_cpu",
+            "--sample_steps", str(steps),
+            "--sample_shift", "8",
+            "--sample_guide_scale", "6",   # Wan2.1 README recommends 6 for T2V-1.3B
+            "--base_seed", "42",
+            "--prompt", full_prompt,
+            "--save_file", tmp_path,
+            "--frame_num", str(num_frames),
+        ]
+
+        logger.info(f"[{shot_id}] Starting Wan generation (timeout={GENERATE_TIMEOUT}s)")
+        logger.info(f"[{shot_id}] Command: {' '.join(cmd)}")
+
+        proc = None
         async with _sem:
-            proc = await asyncio.create_subprocess_exec(
-                "python", GENERATE_SCRIPT,
-                "--task", "t2v-1.3B",
-                "--size", f"{width}*{height}",
-                "--ckpt_dir", MODEL_PATH,
-                "--offload_model", "True",   # 显存不足时 CPU 卸载
-                "--t5_cpu",                   # T5 encoder 在 CPU 运行
-                "--sample_steps", str(steps),
-                "--sample_shift", "8",        # 推荐采样偏移
-                "--base_seed", "42",
-                "--prompt", full_prompt,
-                "--save_file", tmp_path,
-                "--frame_num", str(num_frames),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=WAN_REPO_PATH,            # 必须在 Wan2.1 仓库目录下运行
-            )
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=WAN_REPO_PATH,
+                )
+            except Exception as exc:
+                raise RuntimeError(f"Failed to start Wan subprocess: {exc}") from exc
+
             try:
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(), timeout=GENERATE_TIMEOUT
                 )
             except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
+                logger.error(f"[{shot_id}] Timeout after {GENERATE_TIMEOUT}s — killing Wan process")
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception:
+                    pass
                 raise RuntimeError(f"Wan generation timed out after {GENERATE_TIMEOUT}s")
 
-        if proc.returncode != 0:
-            err = stderr.decode()[-500:] if stderr else ""
-            raise RuntimeError(f"Wan generate.py failed (exit {proc.returncode}): {err}")
+        # Log subprocess output for Docker visibility
+        if stdout:
+            for line in stdout.decode(errors="replace").splitlines():
+                logger.info(f"[{shot_id}][wan] {line}")
+        if stderr:
+            for line in stderr.decode(errors="replace").splitlines():
+                logger.info(f"[{shot_id}][wan-err] {line}")
 
-        # Validate output
-        if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+        if proc.returncode != 0:
+            err_text = stderr.decode(errors="replace")[-800:] if stderr else ""
+            raise _classify_error(proc.returncode, err_text)
+
+        # Validate output file
+        if not os.path.exists(tmp_path):
             raise RuntimeError(f"Wan generate.py produced no output file at {tmp_path}")
+        file_size = os.path.getsize(tmp_path)
+        if file_size < _MIN_FILE_SIZE:
+            raise RuntimeError(f"Wan output file too small ({file_size} bytes) — likely corrupted")
+
+        logger.info(f"[{shot_id}] Wan generation succeeded, file size={file_size} bytes")
 
         # Freeze-extend if TTS requires longer duration than model output
         model_duration = num_frames / 16.0  # Wan outputs ~16fps
         if duration_seconds > model_duration + 0.1:
+            logger.info(f"[{shot_id}] Extending video from {model_duration:.1f}s to {duration_seconds:.1f}s")
             await _freeze_extend(tmp_path, duration_seconds)
 
         os.replace(tmp_path, output_path)
+        logger.info(f"[{shot_id}] Saved clip to {output_path}")
 
     async def load_model(self) -> None:
         pass  # Model is loaded by subprocess; no persistent process
 
     async def unload_model(self) -> None:
         pass
+
+
+def _classify_error(returncode: int, stderr: str) -> RuntimeError:
+    """Parse stderr to return a more specific error type."""
+    stderr_lower = stderr.lower()
+    if "cuda out of memory" in stderr_lower or "oom" in stderr_lower:
+        return RuntimeError(f"CUDA OOM during Wan generation: {stderr[-500:]}")
+    if "checkpoint" in stderr_lower or "ckpt" in stderr_lower:
+        return RuntimeError(f"Wan model checkpoint error: {stderr[-500:]}")
+    if "no module named" in stderr_lower:
+        return RuntimeError(f"Wan dependency missing: {stderr[-500:]}")
+    return RuntimeError(f"Wan generate.py failed (exit {returncode}): {stderr[-500:]}")
 
 
 async def _freeze_extend(video_path: str, target_duration: float):

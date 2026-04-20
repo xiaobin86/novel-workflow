@@ -121,6 +121,13 @@ services:
       WAN_MODEL_PATH: /app/models/Wan2.1-T2V-1.3B
       WAN_REPO_PATH: /app/wan-repo
       WAN_GENERATE_TIMEOUT: ${WAN_GENERATE_TIMEOUT:-600}
+      PYTHONUNBUFFERED: "1"
+      # WSL2 + Blackwell (sm_120) 修复：让 CUDA 错误同步可见
+      CUDA_LAUNCH_BLOCKING: "1"
+      # 优化 CUDA 显存分配，减少碎片化
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    # 共享内存：大模型加载需要足够的 /dev/shm
+    shm_size: "4gb"
     deploy:
       resources:
         reservations:

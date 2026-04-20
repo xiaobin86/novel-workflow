@@ -11,6 +11,13 @@ export type StepStatus = "pending" | "in_progress" | "stopped" | "completed" | "
 export interface StoryboardResult {
   shot_count: number;
   storyboard_path: string;
+  shots?: Array<{
+    shot_id: string;
+    shot_type?: string;
+    duration?: number;
+    action?: string;
+    dialogue?: string;
+  }>;
 }
 
 export interface ImageResult {
@@ -118,6 +125,7 @@ export async function recoverStepResult(id: string, step: StepName): Promise<Ste
           data: {
             shot_count: sb.shots?.length ?? 0,
             storyboard_path: path.join(dir, "storyboard.json"),
+            shots: sb.shots ?? [],
           },
         };
       }

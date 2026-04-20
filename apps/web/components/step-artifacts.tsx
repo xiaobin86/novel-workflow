@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type {
   StepResult,
+  StoryboardResult,
   ImageResult,
   TTSResult,
   VideoResult,
@@ -38,27 +39,16 @@ interface StoryboardData {
 }
 
 export function StoryboardArtifacts({
-  projectId,
+  result,
 }: {
-  projectId: string;
+  result: StoryboardResult;
 }) {
-  const [data, setData] = useState<StoryboardData | null>(null);
-
-  useEffect(() => {
-    fetch(`/api/projects/${projectId}/files/storyboard.json`)
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed to fetch storyboard");
-        return r.json();
-      })
-      .then((json: StoryboardData) => setData(json))
-      .catch(() => setData(null));
-  }, [projectId]);
-
-  if (!data?.shots?.length) return null;
+  const shots = result.shots ?? [];
+  if (!shots.length) return null;
 
   return (
     <div className="grid grid-cols-3 gap-2 max-h-[300px] overflow-y-auto pr-1">
-      {data.shots.map((shot) => (
+      {shots.map((shot) => (
         <div key={shot.shot_id} className="bg-zinc-50 rounded p-3 text-sm">
           <div className="flex items-center gap-2 mb-1">
             <span className="font-mono font-medium text-zinc-700">
@@ -410,7 +400,7 @@ export function StepArtifacts({
   if (result) {
     switch (result.type) {
       case "storyboard":
-        return <StoryboardArtifacts projectId={projectId} />;
+        return <StoryboardArtifacts result={result.data} />;
       case "image":
         return <ImageArtifacts result={result.data} projectId={projectId} onDeleteItem={onDeleteItem} />;
       case "tts":

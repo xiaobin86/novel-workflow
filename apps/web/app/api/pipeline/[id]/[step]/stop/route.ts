@@ -16,17 +16,23 @@ export async function POST(
   }
 
   const serviceUrl = SERVICE_URLS[stepName];
-  const res = await fetch(`${serviceUrl}/jobs/${jobId}/stop`, {
-    method: "POST",
-  });
+  try {
+    const res = await fetch(`${serviceUrl}/jobs/${jobId}/stop`, {
+      method: "POST",
+    });
 
-  if (!res.ok) {
-    if (res.status === 404) {
-      // Job already gone — just mark as stopped locally
-      await updateStep(projectId, stepName, { status: "stopped", job_id: null });
-      return NextResponse.json({ status: "stopped" });
+    if (!res.ok) {
+      if (res.status === 404) {
+        // Job already gone — mark as stopped
+        await updateStep(projectId, stepName, { status: "stopped", job_id: null });
+        return NextResponse.json({ status: "stopped" });
+      }
+      return NextResponse.json({ error: await res.text() }, { status: res.status });
     }
-    return NextResponse.json({ error: await res.text() }, { status: res.status });
+  } catch {
+    // Service unreachable (e.g., container stopped) — mark as stopped
+    await updateStep(projectId, stepName, { status: "stopped", job_id: null });
+    return NextResponse.json({ status: "stopped" });
   }
 
   await updateStep(projectId, stepName, { status: "stopped" });

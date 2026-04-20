@@ -18,7 +18,7 @@ export function useStepControl(
   const clearError = (step: StepName) =>
     setErrors((prev) => { const n = { ...prev }; delete n[step]; return n; });
 
-  async function callControl(step: StepName, action: "pause" | "resume" | "stop") {
+  async function callControl(step: StepName, action: "stop") {
     setLoadingFor(step, true);
     clearError(step);
     try {
@@ -48,9 +48,7 @@ export function useStepControl(
     }
   }
 
-  const pauseStep  = useCallback((step: StepName) => callControl(step, "pause"),  [projectId, mutateState]);
-  const resumeStep = useCallback((step: StepName) => callControl(step, "resume"), [projectId, mutateState]);
-  const stopStep   = useCallback((step: StepName) => callControl(step, "stop"),   [projectId, mutateState]);
+  const stopStep = useCallback((step: StepName) => callControl(step, "stop"), [projectId, mutateState]);
 
-  return { pauseStep, resumeStep, stopStep, loading, errors };
+  return { stopStep, loading, errors };
 }

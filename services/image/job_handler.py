@@ -30,7 +30,7 @@ async def run_generate_images_job(job: JobRecord, project_id: str, config: dict,
     job.total = len(shots)
 
     for shot in shots:
-        await job.check_pause()
+        job.check_stop()
         shot_id = shot["shot_id"]
         output_path = images_dir / f"{shot_id}.png"
 

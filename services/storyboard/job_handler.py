@@ -26,7 +26,7 @@ async def run_storyboard_job(
 
     job.total = 1
 
-    await job.check_pause()
+    job.check_stop()
     await job.emit_progress(phase="calling_llm", message="正在调用 Kimi API...")
 
     storyboard = await provider.generate(text=text, episode=episode, title=title, config={})

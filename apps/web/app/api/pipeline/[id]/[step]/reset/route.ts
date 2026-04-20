@@ -30,7 +30,7 @@ export async function POST(
 
   // Guard: cannot reset a running step
   const s = state.steps[stepName]?.status;
-  if (s === "in_progress" || s === "paused") {
+  if (s === "in_progress") {
     return NextResponse.json(
       { error: `步骤「${stepName}」正在执行中，请先停止后再重新生成` },
       { status: 409 }
@@ -61,7 +61,6 @@ export async function POST(
   await updateStep(projectId, stepName, {
     status: "pending",
     job_id: null,
-    result: null,
   });
 
   return NextResponse.json({ ok: true });

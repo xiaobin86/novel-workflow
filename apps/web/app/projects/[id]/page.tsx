@@ -1,6 +1,8 @@
 "use client";
-import { use, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
+import useSWR from "swr";
 import { useProjectState } from "@/hooks/useProjectState";
 import { useStepProgress } from "@/hooks/useStepProgress";
 import { useStepControl } from "@/hooks/useStepControl";
@@ -12,6 +14,8 @@ import { StepArtifacts } from "@/components/step-artifacts";
 import { DeleteProjectDialog } from "@/components/delete-project-dialog";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { StepResult } from "@/lib/project-store";
+
+const fetcher = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null));
 
 // ── Auto-mode hook ─────────────────────────────────────────────────────────────
 function useAutoMode(projectId: string) {
@@ -32,7 +36,6 @@ function useAutoMode(projectId: string) {
 const STATUS_ICONS: Record<string, string> = {
   pending:     "○",
   in_progress: "◌",
-  paused:      "⏸",
   stopped:     "■",
   completed:   "✓",
   failed:      "✗",
@@ -40,7 +43,6 @@ const STATUS_ICONS: Record<string, string> = {
 const STATUS_COLORS: Record<string, string> = {
   pending:     "text-zinc-400",
   in_progress: "text-blue-500",
-  paused:      "text-amber-500",
   stopped:     "text-orange-500",
   completed:   "text-green-600",
   failed:      "text-red-500",
@@ -63,7 +65,7 @@ function StepContent({
     return <p className="text-sm text-zinc-400">等待执行</p>;
   }
 
-  if (status === "in_progress" || status === "paused") {
+  if (status === "in_progress") {
     return (
       <div className="space-y-2">
         <Progress value={progress.percent} className="h-2" />
@@ -73,9 +75,6 @@ function StepContent({
             ? ` (${progress.lastEvent.done}/${progress.lastEvent.total})`
             : ""}
         </p>
-        {status === "paused" && (
-          <p className="text-sm text-amber-600">已暂停，点击继续恢复执行</p>
-        )}
         {progress.error && (
           <p className="text-sm text-red-500">{progress.error}</p>
         )}
@@ -139,30 +138,33 @@ function StepArtifactsWrapper({
   step,
   projectId,
   status,
-  result,
   progressArtifacts,
   onRegenerateItem,
 }: {
   step: StepName;
   projectId: string;
   status: string;
-  result?: StepResult | null;
   progressArtifacts?: ReturnType<typeof useStepProgress>["artifacts"];
   onRegenerateItem?: (shot_id: string) => void;
 }) {
-  const show = ["completed", "stopped", "in_progress", "paused"].includes(status);
-  if (!show) return null;
-  // During active execution, suppress the old persisted result so live progress
-  // artifacts are shown instead (avoids stale artifacts after a step restart).
-  const activelyRunning = ["in_progress", "paused"].includes(status);
-  const displayResult = activelyRunning ? null : result;
-  const hasContent = !!displayResult || (progressArtifacts && progressArtifacts.length > 0);
+  const activelyRunning = status === "in_progress";
+
+  // Always fetch from disk regardless of state.json status — ensures consistency
+  // with actual files on disk.  SWR dedupes requests across re-renders.
+  const { data: diskResult } = useSWR<StepResult | null>(
+    activelyRunning ? null : `/api/projects/${projectId}/artifacts/${step}`,
+    fetcher,
+    { revalidateOnFocus: false }
+  );
+
+  const hasContent = !!diskResult || (progressArtifacts && progressArtifacts.length > 0);
   if (!hasContent) return null;
+
   return (
     <div className="mt-4 pt-4 border-t">
       <StepArtifacts
         step={step}
-        result={displayResult}
+        result={activelyRunning ? null : diskResult}
         projectId={projectId}
         progressArtifacts={progressArtifacts}
         onRegenerateItem={activelyRunning ? undefined : onRegenerateItem}
@@ -172,7 +174,7 @@ function StepArtifactsWrapper({
 }
 
 // ── Step card (one step, owns its progress hook) ──────────────────────────────
-type StepStateType = { status: string; job_id: string | null; result?: StepResult | null };
+type StepStateType = { status: string; job_id: string | null };
 
 function StepCard({
   step,
@@ -185,8 +187,6 @@ function StepCard({
   controlLoading,
   controlErrors,
   onStart,
-  onPause,
-  onResume,
   onStop,
   onRegenerate,
   onRegenerateItem,
@@ -201,24 +201,22 @@ function StepCard({
   controlLoading: Record<string, boolean>;
   controlErrors: Record<string, string>;
   onStart: (step: StepName) => void;
-  onPause: (step: StepName) => void;
-  onResume: (step: StepName) => void;
   onStop: (step: StepName) => void;
   onRegenerate: (step: StepName) => Promise<void>;
   onRegenerateItem: (step: StepName, shot_id: string) => Promise<void>;
 }) {
   const status = stepState?.status ?? "pending";
-  const isActive = ["in_progress", "paused", "stopped", "completed"].includes(status);
+  const isActive = ["in_progress", "stopped", "completed"].includes(status);
   // Single hook call — shared between StepContent and StepArtifactsWrapper
   const progress = useStepProgress(
     projectId,
     step,
-    isActive && (status === "in_progress" || status === "paused"),
+    isActive && status === "in_progress",
   );
 
   function canStart(): boolean {
     const s = stepState?.status;
-    if (s !== "pending" && s !== "failed" && s !== "stopped") return false;
+    if (s !== "pending" && s !== "failed" && s !== "stopped" && s !== "in_progress") return false;
     const i = STEP_ORDER.indexOf(step);
     if (i === 0) return true;
     if (step === "tts") return allSteps.storyboard?.status === "completed";
@@ -245,16 +243,14 @@ function StepCard({
           className={`ml-auto text-xs ${
             status === "completed" ? "bg-green-100 text-green-700" :
             status === "in_progress" ? "bg-blue-100 text-blue-700" :
-            status === "paused" ? "bg-amber-100 text-amber-700" :
             status === "stopped" ? "bg-orange-100 text-orange-700" :
             status === "failed" ? "bg-red-100 text-red-700" :
             "bg-zinc-100 text-zinc-500"
           }`}
         >
-          {status === "completed" ? "已完成" :
-           status === "in_progress" ? "执行中" :
-           status === "paused" ? "已暂停" :
-           status === "stopped" ? "已停止" :
+           {status === "completed" ? "已完成" :
+            status === "in_progress" ? "执行中" :
+            status === "stopped" ? "已停止" :
            status === "failed" ? "失败" : "待执行"}
         </Badge>
       </div>
@@ -266,7 +262,6 @@ function StepCard({
           step={step}
           projectId={projectId}
           status={status}
-          result={stepState.result}
           progressArtifacts={progress.artifacts}
           onRegenerateItem={(shot_id) => onRegenerateItem(step, shot_id)}
         />
@@ -294,26 +289,7 @@ function StepCard({
           {controlErrors[step] && (
             <p className="text-xs text-red-500 text-right">{controlErrors[step]}</p>
           )}
-          <div className="flex justify-end gap-2">
-            <Button size="sm" variant="outline" disabled={!!controlLoading[step]} onClick={() => onPause(step)}>
-              {controlLoading[step] ? "处理中..." : "⏸ 暂停"}
-            </Button>
-            <Button size="sm" variant="destructive" disabled={!!controlLoading[step]} onClick={() => onStop(step)}>
-              {controlLoading[step] ? "处理中..." : "■ 停止"}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {status === "paused" && (
-        <div className="px-5 pb-4 space-y-2">
-          {controlErrors[step] && (
-            <p className="text-xs text-red-500 text-right">{controlErrors[step]}</p>
-          )}
-          <div className="flex justify-end gap-2">
-            <Button size="sm" variant="outline" disabled={!!controlLoading[step]} onClick={() => onResume(step)}>
-              {controlLoading[step] ? "处理中..." : "▶ 继续"}
-            </Button>
+          <div className="flex justify-end">
             <Button size="sm" variant="destructive" disabled={!!controlLoading[step]} onClick={() => onStop(step)}>
               {controlLoading[step] ? "处理中..." : "■ 停止"}
             </Button>
@@ -391,10 +367,11 @@ function StepCard({
 }
 
 // ── Main page ──────────────────────────────────────────────────────────────────
-export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: projectId } = use(params);
+export default function ProjectPage() {
+  const params = useParams();
+  const projectId = params.id as string;
   const { state, mutate } = useProjectState(projectId);
-  const { pauseStep, resumeStep, stopStep, loading: controlLoading, errors: controlErrors } = useStepControl(projectId, mutate);
+  const { stopStep, loading: controlLoading, errors: controlErrors } = useStepControl(projectId, mutate);
   const [autoMode, toggleAutoMode] = useAutoMode(projectId);
   const [starting, setStarting] = useState<StepName | null>(null);
   const autoRef = useRef(autoMode);
@@ -488,7 +465,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-6 py-8 space-y-4">
+      <main className="max-w-7xl mx-auto px-8 py-8 space-y-4">
         {STEP_ORDER.map((step, idx) => (
           <StepCard
             key={step}
@@ -502,8 +479,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             controlLoading={controlLoading}
             controlErrors={controlErrors}
             onStart={startStep}
-            onPause={pauseStep}
-            onResume={resumeStep}
             onStop={stopStep}
             onRegenerate={regenerateStep}
             onRegenerateItem={regenerateItem}

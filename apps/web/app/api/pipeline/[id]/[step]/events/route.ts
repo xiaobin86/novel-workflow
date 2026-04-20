@@ -55,14 +55,7 @@ export async function GET(
 
               // Update state.json on terminal events
               if (event === "complete") {
-                // Always rebuild result from disk so partial regenerations (where only
-                // a subset of shots was re-generated) still get a full, accurate result.
-                const { recoverStepResult } = await import("@/lib/project-store");
-                const diskResult = await recoverStepResult(projectId, stepName);
-                await updateStep(projectId, stepName, {
-                  status: "completed",
-                  result: diskResult,
-                });
+                await updateStep(projectId, stepName, { status: "completed" });
                 done = true;
               } else if (event === "stopped") {
                 await updateStep(projectId, stepName, { status: "stopped" });
@@ -70,10 +63,7 @@ export async function GET(
               } else if (event === "error") {
                 const parsed = JSON.parse(data);
                 if (!parsed.retryable) {
-                  await updateStep(projectId, stepName, {
-                    status: "failed",
-                    result: null,
-                  });
+                  await updateStep(projectId, stepName, { status: "failed" });
                   done = true;
                 }
               }

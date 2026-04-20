@@ -24,7 +24,6 @@ export interface StepProgress {
   events: ProgressEvent[];
   lastEvent: ProgressEvent | null;
   isComplete: boolean;
-  isPaused: boolean;
   isStopped: boolean;
   error: string | null;
   percent: number;
@@ -38,7 +37,6 @@ export function useStepProgress(
 ): StepProgress {
   const [events, setEvents] = useState<ProgressEvent[]>([]);
   const [isComplete, setIsComplete] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const [isStopped, setIsStopped] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<ProgressArtifact[]>([]);
@@ -50,7 +48,6 @@ export function useStepProgress(
   useEffect(() => {
     if (active) {
       setIsComplete(false);
-      setIsPaused(false);
       setIsStopped(false);
       setError(null);
       setEvents([]);
@@ -91,14 +88,6 @@ export function useStepProgress(
       }
     });
 
-    es.addEventListener("paused", () => {
-      setIsPaused(true);
-    });
-
-    es.addEventListener("resumed", () => {
-      setIsPaused(false);
-    });
-
     es.addEventListener("stopped", () => {
       setIsStopped(true);
       setIsComplete(true);
@@ -131,5 +120,5 @@ export function useStepProgress(
       ? Math.round(((lastEvent.done ?? 0) / lastEvent.total) * 100)
       : 0;
 
-  return { events, lastEvent, isComplete, isPaused, isStopped, error, percent, artifacts };
+  return { events, lastEvent, isComplete, isStopped, error, percent, artifacts };
 }

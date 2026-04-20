@@ -57,7 +57,7 @@ export default function ProjectsPage() {
         <Button onClick={() => setCreating(true)}>+ 新建项目</Button>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-8">
+      <main className="max-w-7xl mx-auto px-8 py-8">
         {creating && (
           <Card className="mb-8">
             <CardHeader><CardTitle>新建项目</CardTitle></CardHeader>

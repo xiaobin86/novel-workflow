@@ -21,7 +21,7 @@ export async function DELETE(
 
   // 2. Reject if any step is actively running
   const activeStep = Object.entries(state.steps).find(([, s]) =>
-    s.status === "in_progress" || s.status === "paused"
+    s.status === "in_progress"
   );
   if (activeStep) {
     return NextResponse.json(

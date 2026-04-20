@@ -46,7 +46,7 @@ export function StoryboardArtifacts({
   if (!data?.shots?.length) return null;
 
   return (
-    <div className="overflow-y-auto max-h-64 space-y-2 pr-2">
+    <div className="grid grid-cols-3 gap-2 max-h-[300px] overflow-y-auto pr-1">
       {data.shots.map((shot) => (
         <div key={shot.shot_id} className="bg-zinc-50 rounded p-3 text-sm">
           <div className="flex items-center gap-2 mb-1">
@@ -111,7 +111,7 @@ export function ImageArtifacts({
   if (!result.images?.length) return null;
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
       {result.images.map((img) => (
         <div
           key={img.filename}
@@ -166,7 +166,7 @@ export function TTSArtifacts({
   if (!result.audio_files?.length) return null;
 
   return (
-    <div className="overflow-y-auto max-h-64 space-y-2 pr-2">
+    <div className="grid grid-cols-3 gap-2 max-h-[260px] overflow-y-auto pr-1">
       {result.audio_files.map((filename) => {
         const { shotId, trackType } = parseAudioFilename(filename);
         const trackLabel = getTrackLabel(trackType);
@@ -303,7 +303,7 @@ function ProgressArtifactsView({
 
   if (step === "image") {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+    <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
         {done.map((a) => {
           const filename = a.filename ?? `${a.shot_id}.png`;
           return (
@@ -326,7 +326,7 @@ function ProgressArtifactsView({
 
   if (step === "tts") {
     return (
-      <div className="overflow-y-auto max-h-64 space-y-2 pr-2">
+      <div className="grid grid-cols-3 gap-2 max-h-[260px] overflow-y-auto pr-1">
         {done.map((a, i) => {
           const filename = a.filename ?? `${a.shot_id}_action.mp3`;
           const trackLabel = filename.includes("dialogue") ? "旁白" : "台词";

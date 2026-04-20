@@ -43,7 +43,7 @@ async def run_tts_job(job: JobRecord, project_id: str, provider: TTSProvider):
     dialogue_voice = provider.default_dialogue_voice
 
     for shot in shots:
-        await job.check_pause()
+        job.check_stop()
         shot_id = shot["shot_id"]
 
         # ── Action track ─────────────────────────────────────────────────────

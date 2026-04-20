@@ -6,7 +6,7 @@ import fs from "fs/promises";
 import path from "path";
 import { PROJECTS_BASE_DIR, StepName, STEP_ORDER } from "./services";
 
-export type StepStatus = "pending" | "in_progress" | "paused" | "stopped" | "completed" | "failed";
+export type StepStatus = "pending" | "in_progress" | "stopped" | "completed" | "failed";
 
 export interface StoryboardResult {
   shot_count: number;
@@ -45,7 +45,6 @@ export interface StepState {
   status: StepStatus;
   job_id: string | null;
   updated_at: string;
-  result?: StepResult | null;
 }
 
 export interface ProjectState {
@@ -210,7 +209,7 @@ async function recoverStateFromDisk(id: string): Promise<ProjectState | null> {
     const result = await recoverStepResult(id, step);
     if (result) {
       const status = await recoverStepStatus(dir, step, result, shotCount);
-      steps[step] = { status, job_id: null, updated_at: now, result };
+      steps[step] = { status, job_id: null, updated_at: now };
     }
   }
 
@@ -241,6 +240,70 @@ export async function createProject(id: string, title: string, episode: string, 
   return state;
 }
 
+/** Validate and correct step status based on actual file counts vs shot count */
+async function validateStepStatuses(id: string, state: ProjectState): Promise<boolean> {
+  const dir = projectDir(id);
+  let shotCount = 0;
+  try {
+    const sb = JSON.parse(await fs.readFile(path.join(dir, "storyboard.json"), "utf-8"));
+    shotCount = sb.shots?.length ?? 0;
+  } catch {
+    return false;
+  }
+
+  let dirty = false;
+  const now = new Date().toISOString();
+
+  for (const step of STEP_ORDER) {
+    if (step === "storyboard" || step === "assembly") continue;
+
+    const currentStatus = state.steps[step].status;
+    if (currentStatus === "pending") continue; // No files expected
+
+    // Get actual file count from disk
+    const result = await recoverStepResult(id, step);
+    if (!result) {
+      // No files on disk but state says non-pending → correct to pending
+      if (currentStatus !== "pending") {
+        state.steps[step].status = "pending";
+        state.steps[step].updated_at = now;
+        dirty = true;
+      }
+      continue;
+    }
+
+    // Calculate expected status based on file count
+    let actualCount = 0;
+    if (step === "image") {
+      actualCount = (result.data as ImageResult).images?.length ?? 0;
+    } else if (step === "tts") {
+      const audioFiles = (result.data as TTSResult).audio_files ?? [];
+      actualCount = new Set(audioFiles.map((f) => f.replace(/_[^_]+\.[^.]+$/, ""))).size;
+    } else if (step === "video") {
+      actualCount = (result.data as VideoResult).clips?.length ?? 0;
+    }
+
+    const expectedStatus: StepStatus =
+      actualCount === 0
+        ? "pending"
+        : actualCount >= shotCount && shotCount > 0
+          ? "completed"
+          : "stopped";
+
+    if (currentStatus !== expectedStatus) {
+      state.steps[step].status = expectedStatus;
+      state.steps[step].updated_at = now;
+      // Clear job_id when status is corrected (task was lost/restarted)
+      if (currentStatus === "in_progress" && expectedStatus !== "in_progress") {
+        state.steps[step].job_id = null;
+      }
+      dirty = true;
+    }
+  }
+
+  return dirty;
+}
+
 export async function readState(id: string): Promise<ProjectState> {
   let state: ProjectState;
   try {
@@ -255,29 +318,26 @@ export async function readState(id: string): Promise<ProjectState> {
     throw err;
   }
 
-  // Fill in missing / migrate old-format results for terminal steps
+  // Clean up stale result fields from old format
   let dirty = false;
   for (const step of STEP_ORDER) {
     const s = state.steps[step];
-    // Only fix completed/stopped/failed steps — never touch in_progress or paused
-    if (!s || !["completed", "stopped", "failed"].includes(s.status)) continue;
-
+    // Remove result field if present (no longer stored in state.json)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = s.result as any;
-
-    // Case 1: no result at all — recover from disk
-    if (!raw) {
-      const result = await recoverStepResult(id, step);
-      if (result) { state.steps[step] = { ...s, result }; dirty = true; }
-      continue;
-    }
-
-    // Case 2: old format (no `type` field) — wrap it
-    if (!raw.type) {
-      state.steps[step] = { ...s, result: { type: step, data: raw } as StepResult };
+    if ((s as any).result !== undefined) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (s as any).result;
       dirty = true;
     }
   }
+
+  // Validate file counts and correct status if needed
+  // This handles cases where job was interrupted but state wasn't updated
+  const statusCorrected = await validateStepStatuses(id, state);
+  if (statusCorrected) {
+    dirty = true;
+  }
+
   if (dirty) {
     await _writeAtomic(statePath(id), JSON.stringify(state, null, 2));
   }

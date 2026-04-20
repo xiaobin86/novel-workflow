@@ -53,7 +53,7 @@ export async function POST(
 
   // Guard: cannot run while step is active
   const s = state.steps[stepName]?.status;
-  if (s === "in_progress" || s === "paused") {
+  if (s === "in_progress") {
     return NextResponse.json(
       { error: `步骤「${stepName}」正在执行中` },
       { status: 409 }

@@ -67,8 +67,7 @@ export async function POST(
   const { job_id } = await serviceRes.json();
 
   // Update project state
-  // Clear previous result so stale artifacts don't appear during re-execution
-  await updateStep(projectId, stepName, { status: "in_progress", job_id, result: null });
+  await updateStep(projectId, stepName, { status: "in_progress", job_id });
 
   return NextResponse.json({ job_id, step: stepName }, { status: 202 });
 }

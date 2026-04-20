@@ -19,7 +19,7 @@ async def run_assembly_job(job: JobRecord, project_id: str, config: dict):
     job.total = len(shots)
 
     async def on_progress(phase: str, message: str, **kwargs):
-        await job.check_pause()
+        job.check_stop()
         await job.emit_progress(phase=phase, message=message, **kwargs)
 
     result = await assemble(project_dir, shots, config, on_progress)

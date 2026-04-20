@@ -13,7 +13,7 @@ PROJECTS_BASE = os.getenv("PROJECTS_BASE_DIR", "/app/projects")
 
 DEFAULT_CONFIG = {
     "width": 768,
-    "height": 768,
+    "height": 432,  # 16:9 aspect ratio (768 * 9 / 16)
     "num_inference_steps": 28,
     "guidance_scale": 3.5,
 }

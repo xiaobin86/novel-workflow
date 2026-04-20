@@ -4,7 +4,7 @@ import { readState, updateStep } from "@/lib/project-store";
 
 // Default configs per step (server-side only, not user-configurable in v1.0)
 const STEP_CONFIGS: Partial<Record<StepName, Record<string, unknown>>> = {
-  image:    { width: 768, height: 768, num_inference_steps: 28, guidance_scale: 3.5 },
+  image:    { width: 768, height: 432, num_inference_steps: 28, guidance_scale: 3.5 },  // 16:9 aspect ratio
   video:    { width: 832, height: 480, num_frames: 65, num_inference_steps: 30 },
   assembly: { action_volume: 1.0, dialogue_volume: 1.0 },
 };

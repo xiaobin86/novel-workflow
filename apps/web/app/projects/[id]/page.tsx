@@ -49,14 +49,13 @@ function StepContent({
   step,
   projectId,
   status,
-  isActive,
+  progress,
 }: {
   step: StepName;
   projectId: string;
   status: string;
-  isActive: boolean;
+  progress: ReturnType<typeof useStepProgress>;
 }) {
-  const progress = useStepProgress(projectId, step, isActive && status === "in_progress");
 
   if (status === "pending") {
     return <p className="text-sm text-zinc-400">等待执行</p>;
@@ -135,19 +134,187 @@ function StepContent({
 
 // ── Step artifacts wrapper ─────────────────────────────────────────────────────
 function StepArtifactsWrapper({
+  step,
   projectId,
   status,
   result,
+  progressArtifacts,
 }: {
+  step: StepName;
   projectId: string;
   status: string;
   result?: StepResult | null;
+  progressArtifacts?: ReturnType<typeof useStepProgress>["artifacts"];
 }) {
   const show = ["completed", "stopped", "in_progress", "paused"].includes(status);
   if (!show) return null;
+  const hasContent = !!result || (progressArtifacts && progressArtifacts.length > 0);
+  if (!hasContent) return null;
   return (
     <div className="mt-4 pt-4 border-t">
-      <StepArtifacts result={result} projectId={projectId} />
+      <StepArtifacts
+        step={step}
+        result={result}
+        projectId={projectId}
+        progressArtifacts={progressArtifacts}
+      />
+    </div>
+  );
+}
+
+// ── Step card (one step, owns its progress hook) ──────────────────────────────
+type StepStateType = { status: string; job_id: string | null; result?: StepResult | null };
+
+function StepCard({
+  step,
+  idx,
+  projectId,
+  stepState,
+  allSteps,
+  autoMode,
+  starting,
+  controlLoading,
+  onStart,
+  onPause,
+  onResume,
+  onStop,
+}: {
+  step: StepName;
+  idx: number;
+  projectId: string;
+  stepState: StepStateType;
+  allSteps: Record<StepName, StepStateType>;
+  autoMode: boolean;
+  starting: StepName | null;
+  controlLoading: Record<string, boolean>;
+  onStart: (step: StepName) => void;
+  onPause: (step: StepName) => void;
+  onResume: (step: StepName) => void;
+  onStop: (step: StepName) => void;
+}) {
+  const status = stepState?.status ?? "pending";
+  const isActive = ["in_progress", "paused", "stopped", "completed"].includes(status);
+  // Single hook call — shared between StepContent and StepArtifactsWrapper
+  const progress = useStepProgress(
+    projectId,
+    step,
+    isActive && (status === "in_progress" || status === "paused"),
+  );
+
+  function canStart(): boolean {
+    const s = stepState?.status;
+    if (s !== "pending" && s !== "failed" && s !== "stopped") return false;
+    const i = STEP_ORDER.indexOf(step);
+    if (i === 0) return true;
+    if (step === "tts") return allSteps.storyboard?.status === "completed";
+    if (step === "image") return allSteps.storyboard?.status === "completed";
+    if (step === "video") {
+      return allSteps.image?.status === "completed" && allSteps.tts?.status === "completed";
+    }
+    return allSteps[STEP_ORDER[i - 1]]?.status === "completed";
+  }
+
+  const nextStep = STEP_ORDER[idx + 1] as StepName | undefined;
+
+  return (
+    <div className="bg-white border rounded-lg overflow-hidden">
+      {/* Step header */}
+      <div className="flex items-center gap-3 px-5 py-4 border-b">
+        <span className={`text-lg font-mono w-5 ${STATUS_COLORS[status]}`}>
+          {STATUS_ICONS[status]}
+        </span>
+        <span className="text-sm text-zinc-400 w-4">{idx + 1}</span>
+        <span className="font-medium">{STEP_LABELS[step]}</span>
+        <Badge
+          className={`ml-auto text-xs ${
+            status === "completed" ? "bg-green-100 text-green-700" :
+            status === "in_progress" ? "bg-blue-100 text-blue-700" :
+            status === "paused" ? "bg-amber-100 text-amber-700" :
+            status === "stopped" ? "bg-orange-100 text-orange-700" :
+            status === "failed" ? "bg-red-100 text-red-700" :
+            "bg-zinc-100 text-zinc-500"
+          }`}
+        >
+          {status === "completed" ? "已完成" :
+           status === "in_progress" ? "执行中" :
+           status === "paused" ? "已暂停" :
+           status === "stopped" ? "已停止" :
+           status === "failed" ? "失败" : "待执行"}
+        </Badge>
+      </div>
+
+      {/* Step content + artifacts */}
+      <div className="px-5 py-4">
+        <StepContent step={step} projectId={projectId} status={status} progress={progress} />
+        <StepArtifactsWrapper
+          step={step}
+          projectId={projectId}
+          status={status}
+          result={stepState.result}
+          progressArtifacts={progress.artifacts}
+        />
+      </div>
+
+      {/* Step actions */}
+      {(status === "pending" || status === "failed" || status === "stopped") && (
+        <div className="px-5 pb-4 flex justify-end">
+          <Button
+            size="sm"
+            disabled={!canStart() || starting === step || controlLoading[step]}
+            onClick={() => onStart(step)}
+          >
+            {starting === step ? "启动中..." :
+             controlLoading[step] ? "处理中..." :
+             status === "failed" ? "重试" :
+             status === "stopped" ? "重新开始" :
+             canStart() ? "开始执行" : "等待前序步骤"}
+          </Button>
+        </div>
+      )}
+
+      {status === "in_progress" && (
+        <div className="px-5 pb-4 flex justify-end gap-2">
+          <Button size="sm" variant="outline" disabled={!!controlLoading[step]} onClick={() => onPause(step)}>
+            {controlLoading[step] ? "处理中..." : "⏸ 暂停"}
+          </Button>
+          <Button size="sm" variant="destructive" disabled={!!controlLoading[step]} onClick={() => onStop(step)}>
+            {controlLoading[step] ? "处理中..." : "■ 停止"}
+          </Button>
+        </div>
+      )}
+
+      {status === "paused" && (
+        <div className="px-5 pb-4 flex justify-end gap-2">
+          <Button size="sm" variant="outline" disabled={!!controlLoading[step]} onClick={() => onResume(step)}>
+            {controlLoading[step] ? "处理中..." : "▶ 继续"}
+          </Button>
+          <Button size="sm" variant="destructive" disabled={!!controlLoading[step]} onClick={() => onStop(step)}>
+            {controlLoading[step] ? "处理中..." : "■ 停止"}
+          </Button>
+        </div>
+      )}
+
+      {/* Confirm to proceed (non-auto mode, step completed) */}
+      {status === "completed" && !autoMode && nextStep && (() => {
+        const nextStatus = allSteps[nextStep]?.status;
+        if (nextStatus !== "pending" && nextStatus !== "stopped") return null;
+        const nextCanStart =
+          nextStep === "tts" ? allSteps.storyboard?.status === "completed" :
+          nextStep === "image" ? allSteps.storyboard?.status === "completed" :
+          nextStep === "video" ? allSteps.image?.status === "completed" && allSteps.tts?.status === "completed" :
+          status === "completed";
+        return (
+          <div className="px-5 pb-4 flex justify-end border-t pt-3">
+            <Button
+              size="sm"
+              disabled={!nextCanStart || starting === nextStep}
+              onClick={() => onStart(nextStep)}
+            >
+              确认并继续 → {STEP_LABELS[nextStep]}
+            </Button>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -166,13 +333,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   useEffect(() => {
     if (!state || !autoRef.current) return;
     const steps = state.steps as Record<StepName, { status: string }>;
-
-    // Find the next pending step after all completed/in_progress
     for (let i = 0; i < STEP_ORDER.length - 1; i++) {
       const cur = STEP_ORDER[i];
       const next = STEP_ORDER[i + 1];
       if (steps[cur]?.status === "completed" && steps[next]?.status === "pending") {
-        // image needs tts to be done first before video can start
         if (next === "video") {
           if (steps.image?.status !== "completed" || steps.tts?.status !== "completed") continue;
         }
@@ -201,22 +365,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     return <div className="p-8 text-zinc-400">加载中...</div>;
   }
 
-  const steps = state.steps as Record<StepName, { status: string; job_id: string | null; result?: StepResult | null }>;
-
-  function canStart(step: StepName): boolean {
-    const s = steps[step]?.status;
-    if (s !== "pending" && s !== "failed" && s !== "stopped") return false;
-    const idx = STEP_ORDER.indexOf(step);
-    if (idx === 0) return true;
-    // image and tts can both start after storyboard
-    if (step === "tts") return steps.storyboard?.status === "completed";
-    if (step === "image") return steps.storyboard?.status === "completed";
-    // video needs both image and tts
-    if (step === "video") {
-      return steps.image?.status === "completed" && steps.tts?.status === "completed";
-    }
-    return steps[STEP_ORDER[idx - 1]]?.status === "completed";
-  }
+  const steps = state.steps as Record<StepName, StepStateType>;
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -236,125 +385,23 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       </header>
 
       <main className="max-w-3xl mx-auto px-6 py-8 space-y-4">
-        {STEP_ORDER.map((step, idx) => {
-          const stepState = steps[step];
-          const status = stepState?.status ?? "pending";
-          const isActive = ["in_progress", "paused", "stopped", "completed"].includes(status);
-
-          return (
-            <div key={step} className="bg-white border rounded-lg overflow-hidden">
-              {/* Step header */}
-              <div className="flex items-center gap-3 px-5 py-4 border-b">
-                <span className={`text-lg font-mono w-5 ${STATUS_COLORS[status]}`}>
-                  {STATUS_ICONS[status]}
-                </span>
-                <span className="text-sm text-zinc-400 w-4">{idx + 1}</span>
-                <span className="font-medium">{STEP_LABELS[step]}</span>
-                <Badge
-                  className={`ml-auto text-xs ${
-                    status === "completed" ? "bg-green-100 text-green-700" :
-                    status === "in_progress" ? "bg-blue-100 text-blue-700" :
-                    status === "paused" ? "bg-amber-100 text-amber-700" :
-                    status === "stopped" ? "bg-orange-100 text-orange-700" :
-                    status === "failed" ? "bg-red-100 text-red-700" :
-                    "bg-zinc-100 text-zinc-500"
-                  }`}
-                >
-                  {status === "completed" ? "已完成" :
-                   status === "in_progress" ? "执行中" :
-                   status === "paused" ? "已暂停" :
-                   status === "stopped" ? "已停止" :
-                   status === "failed" ? "失败" : "待执行"}
-                </Badge>
-              </div>
-
-              {/* Step content */}
-              <div className="px-5 py-4">
-                <StepContent step={step} projectId={projectId} status={status} isActive={isActive} />
-                <StepArtifactsWrapper projectId={projectId} status={status} result={stepState.result} />
-              </div>
-
-              {/* Step actions */}
-              {(status === "pending" || status === "failed" || status === "stopped") && (
-                <div className="px-5 pb-4 flex justify-end">
-                  <Button
-                    size="sm"
-                    disabled={!canStart(step) || starting === step || controlLoading[step]}
-                    onClick={() => startStep(step)}
-                  >
-                    {starting === step ? "启动中..." :
-                     controlLoading[step] ? "处理中..." :
-                     status === "failed" ? "重试" :
-                     status === "stopped" ? "重新开始" :
-                     canStart(step) ? "开始执行" : "等待前序步骤"}
-                  </Button>
-                </div>
-              )}
-
-              {status === "in_progress" && (
-                <div className="px-5 pb-4 flex justify-end gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={controlLoading[step]}
-                    onClick={() => pauseStep(step)}
-                  >
-                    {controlLoading[step] ? "处理中..." : "⏸ 暂停"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    disabled={controlLoading[step]}
-                    onClick={() => stopStep(step)}
-                  >
-                    {controlLoading[step] ? "处理中..." : "■ 停止"}
-                  </Button>
-                </div>
-              )}
-
-              {status === "paused" && (
-                <div className="px-5 pb-4 flex justify-end gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={controlLoading[step]}
-                    onClick={() => resumeStep(step)}
-                  >
-                    {controlLoading[step] ? "处理中..." : "▶ 继续"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    disabled={controlLoading[step]}
-                    onClick={() => stopStep(step)}
-                  >
-                    {controlLoading[step] ? "处理中..." : "■ 停止"}
-                  </Button>
-                </div>
-              )}
-
-              {/* Confirm to proceed (non-auto mode, step completed) */}
-              {status === "completed" && !autoMode && idx < STEP_ORDER.length - 1 && (
-                (() => {
-                  const nextStep = STEP_ORDER[idx + 1];
-                  const nextStatus = steps[nextStep]?.status;
-                  if (nextStatus !== "pending" && nextStatus !== "stopped") return null;
-                  return (
-                    <div className="px-5 pb-4 flex justify-end border-t pt-3">
-                      <Button
-                        size="sm"
-                        disabled={!canStart(nextStep) || starting === nextStep}
-                        onClick={() => startStep(nextStep)}
-                      >
-                        确认并继续 → {STEP_LABELS[nextStep]}
-                      </Button>
-                    </div>
-                  );
-                })()
-              )}
-            </div>
-          );
-        })}
+        {STEP_ORDER.map((step, idx) => (
+          <StepCard
+            key={step}
+            step={step}
+            idx={idx}
+            projectId={projectId}
+            stepState={steps[step]}
+            allSteps={steps}
+            autoMode={autoMode}
+            starting={starting}
+            controlLoading={controlLoading}
+            onStart={startStep}
+            onPause={pauseStep}
+            onResume={resumeStep}
+            onStop={stopStep}
+          />
+        ))}
       </main>
     </div>
   );

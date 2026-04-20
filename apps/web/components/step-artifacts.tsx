@@ -9,6 +9,8 @@ import type {
   VideoResult,
   AssemblyResult,
 } from "@/lib/project-store";
+import type { ProgressArtifact } from "@/hooks/useStepProgress";
+import type { StepName } from "@/lib/services";
 
 // ── Storyboard ────────────────────────────────────────────────────────────────
 
@@ -232,29 +234,136 @@ export function AssemblyArtifacts({
   );
 }
 
+// ── Progress view (执行中实时产物) ────────────────────────────────────────────
+
+function ProgressArtifactsView({
+  step,
+  artifacts,
+  projectId,
+}: {
+  step: StepName;
+  artifacts: ProgressArtifact[];
+  projectId: string;
+}) {
+  const done = artifacts.filter((a) => !a.skipped);
+  if (!done.length) return null;
+
+  if (step === "image") {
+    return (
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+        {done.map((a) => {
+          const filename = a.filename ?? `${a.shot_id}.png`;
+          return (
+            <div key={a.shot_id} className="relative aspect-video bg-zinc-100 rounded overflow-hidden">
+              <img
+                src={`/api/projects/${projectId}/files/images/${filename}`}
+                alt={a.shot_id}
+                loading="lazy"
+                className="w-full h-full object-cover"
+              />
+              <span className="absolute bottom-1 left-1 text-xs bg-black/60 text-white px-1.5 py-0.5 rounded">
+                {a.shot_id}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  if (step === "tts") {
+    return (
+      <div className="overflow-y-auto max-h-64 space-y-2 pr-2">
+        {done.map((a, i) => {
+          const filename = a.filename ?? `${a.shot_id}_action.mp3`;
+          const trackLabel = filename.includes("dialogue") ? "旁白" : "台词";
+          return (
+            <div key={i} className="bg-zinc-50 rounded p-3">
+              <p className="text-sm font-medium text-zinc-700 mb-1">
+                {a.shot_id} · {trackLabel}
+              </p>
+              <audio
+                controls
+                src={`/api/projects/${projectId}/files/audio/${filename}`}
+                className="w-full h-8"
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  if (step === "video") {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {done.map((a) => {
+          const filename = a.filename ?? `${a.shot_id}.mp4`;
+          return (
+            <div key={a.shot_id} className="bg-zinc-50 rounded overflow-hidden">
+              <video
+                controls
+                preload="metadata"
+                src={`/api/projects/${projectId}/files/clips/${filename}`}
+                className="w-full rounded"
+              />
+              <div className="px-3 py-2">
+                <span className="text-sm font-medium text-zinc-700">{a.shot_id}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // storyboard / assembly: 显示已生成数量
+  return (
+    <p className="text-sm text-zinc-500">已生成 {done.length} 项...</p>
+  );
+}
+
 // ── Router ────────────────────────────────────────────────────────────────────
 
 export function StepArtifacts({
+  step,
   result,
   projectId,
+  progressArtifacts,
 }: {
+  step: StepName;
   result?: StepResult | null;
   projectId: string;
+  progressArtifacts?: ProgressArtifact[];
 }) {
-  if (!result) return null;
-
-  switch (result.type) {
-    case "storyboard":
-      return <StoryboardArtifacts projectId={projectId} />;
-    case "image":
-      return <ImageArtifacts result={result.data} projectId={projectId} />;
-    case "tts":
-      return <TTSArtifacts result={result.data} projectId={projectId} />;
-    case "video":
-      return <VideoArtifacts result={result.data} projectId={projectId} />;
-    case "assembly":
-      return <AssemblyArtifacts result={result.data} projectId={projectId} />;
-    default:
-      return null;
+  // 完成状态：使用持久化的 result
+  if (result) {
+    switch (result.type) {
+      case "storyboard":
+        return <StoryboardArtifacts projectId={projectId} />;
+      case "image":
+        return <ImageArtifacts result={result.data} projectId={projectId} />;
+      case "tts":
+        return <TTSArtifacts result={result.data} projectId={projectId} />;
+      case "video":
+        return <VideoArtifacts result={result.data} projectId={projectId} />;
+      case "assembly":
+        return <AssemblyArtifacts result={result.data} projectId={projectId} />;
+      default:
+        return null;
+    }
   }
+
+  // 执行中：使用实时 progressArtifacts
+  if (progressArtifacts?.length) {
+    return (
+      <ProgressArtifactsView
+        step={step}
+        artifacts={progressArtifacts}
+        projectId={projectId}
+      />
+    );
+  }
+
+  return null;
 }

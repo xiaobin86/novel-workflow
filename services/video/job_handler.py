@@ -17,7 +17,7 @@ DEFAULT_CONFIG = {
     "width": 832,
     "height": 480,
     "num_frames": 65,
-    "num_inference_steps": 30,
+    "num_inference_steps": 20,  # 20 steps matches working MVP script (was 30)
 }
 
 # Cooldown between shots to let GPU memory fully release (seconds).

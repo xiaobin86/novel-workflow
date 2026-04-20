@@ -258,7 +258,8 @@ async function validateStepStatuses(id: string, state: ProjectState): Promise<bo
     if (step === "storyboard" || step === "assembly") continue;
 
     const currentStatus = state.steps[step].status;
-    if (currentStatus === "pending") continue; // No files expected
+    if (currentStatus === "pending") continue;     // No files expected
+    if (currentStatus === "in_progress") continue; // Active job — don't interfere with running tasks
 
     // Get actual file count from disk
     const result = await recoverStepResult(id, step);

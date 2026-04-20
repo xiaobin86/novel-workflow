@@ -44,6 +44,19 @@ export function useStepProgress(
   const [artifacts, setArtifacts] = useState<ProgressArtifact[]>([]);
   const esRef = useRef<EventSource | null>(null);
 
+  // Reset all ephemeral state when a step becomes active (started or restarted).
+  // This ensures the EventSource effect below can reconnect after a stop→restart cycle
+  // (otherwise `isComplete=true` would permanently block reconnection).
+  useEffect(() => {
+    if (active) {
+      setIsComplete(false);
+      setIsPaused(false);
+      setIsStopped(false);
+      setError(null);
+      setEvents([]);
+    }
+  }, [active]);
+
   useEffect(() => {
     if (!active || isComplete) return;
 

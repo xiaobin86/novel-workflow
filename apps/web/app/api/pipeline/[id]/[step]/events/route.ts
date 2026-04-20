@@ -56,9 +56,14 @@ export async function GET(
               // Update state.json on terminal events
               if (event === "complete") {
                 const parsed = JSON.parse(data);
+                // Wrap raw backend result in { type, data } so it matches StepResult
+                const rawResult = parsed.result ?? null;
+                const wrappedResult = rawResult
+                  ? { type: stepName, data: rawResult }
+                  : null;
                 await updateStep(projectId, stepName, {
                   status: "completed",
-                  result: parsed.result ?? null,
+                  result: wrappedResult as import("@/lib/project-store").StepResult | null,
                 });
                 done = true;
               } else if (event === "stopped") {

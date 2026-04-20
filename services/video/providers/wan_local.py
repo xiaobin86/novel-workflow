@@ -76,19 +76,22 @@ class WanLocalProvider(VideoProvider):
         proc = None
         async with _sem:
             try:
+                # Inherit parent's stdout/stderr so logs stream directly to Docker.
+                # PIPE buffers everything in memory until completion; if the process
+                # is OOM-killed, all buffered output is lost, making diagnosis
+                # impossible. With inherited streams, docker logs capture output
+                # in real time and partial logs survive SIGKILL.
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                    stdout=None,  # inherit
+                    stderr=None,  # inherit
                     cwd=WAN_REPO_PATH,
                 )
             except Exception as exc:
                 raise RuntimeError(f"Failed to start Wan subprocess: {exc}") from exc
 
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=GENERATE_TIMEOUT
-                )
+                await asyncio.wait_for(proc.wait(), timeout=GENERATE_TIMEOUT)
             except asyncio.TimeoutError:
                 logger.error(f"[{shot_id}] Timeout after {GENERATE_TIMEOUT}s — killing Wan process")
                 try:
@@ -97,14 +100,6 @@ class WanLocalProvider(VideoProvider):
                 except Exception:
                     pass
                 raise RuntimeError(f"Wan generation timed out after {GENERATE_TIMEOUT}s")
-
-        # Log subprocess output for Docker visibility
-        if stdout:
-            for line in stdout.decode(errors="replace").splitlines():
-                logger.info(f"[{shot_id}][wan] {line}")
-        if stderr:
-            for line in stderr.decode(errors="replace").splitlines():
-                logger.info(f"[{shot_id}][wan-err] {line}")
 
         if proc.returncode != 0:
             err_text = stderr.decode(errors="replace")[-800:] if stderr else ""

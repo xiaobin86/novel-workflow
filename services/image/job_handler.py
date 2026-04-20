@@ -19,7 +19,7 @@ DEFAULT_CONFIG = {
 }
 
 
-async def run_generate_images_job(job: JobRecord, project_id: str, config: dict, provider: ImageProvider):
+async def run_generate_images_job(job: JobRecord, project_id: str, config: dict, provider: ImageProvider, model_manager=None):
     project_dir = Path(PROJECTS_BASE) / project_id
     storyboard = json.loads((project_dir / "storyboard.json").read_text(encoding="utf-8-sig"))
     shots = storyboard["shots"]
@@ -38,6 +38,10 @@ async def run_generate_images_job(job: JobRecord, project_id: str, config: dict,
             job.done += 1
             await job.emit_progress(shot_id=shot_id, done=job.done, message="Skipped (already exists)", skipped=True)
             continue
+
+        # Refresh model TTL before each generation to prevent auto-unload
+        if model_manager is not None:
+            await model_manager.get()
 
         try:
             await provider.generate_shot(

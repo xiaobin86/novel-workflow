@@ -64,7 +64,7 @@ async def start_job(req: StartJobRequest):
 
     job = await job_manager.submit(
         req.project_id,
-        lambda job: run_generate_images_job(job, req.project_id, req.config, _provider),
+        lambda job: run_generate_images_job(job, req.project_id, req.config, _provider, model_manager),
     )
     return {"job_id": job.job_id, "status": job.status.value}
 

@@ -102,8 +102,12 @@ class WanLocalProvider(VideoProvider):
                 raise RuntimeError(f"Wan generation timed out after {GENERATE_TIMEOUT}s")
 
         if proc.returncode != 0:
-            err_text = stderr.decode(errors="replace")[-800:] if stderr else ""
-            raise _classify_error(proc.returncode, err_text)
+            # stdout/stderr are inherited (not piped) so Docker logs capture them in real time.
+            # We cannot read the streams here, but the logs already contain the details.
+            raise RuntimeError(
+                f"Wan generate.py failed with exit code {proc.returncode}. "
+                f"Check Docker logs for subprocess output (shot_id={shot_id})"
+            )
 
         # Validate output file
         if not os.path.exists(tmp_path):
@@ -131,7 +135,11 @@ class WanLocalProvider(VideoProvider):
 
 
 def _classify_error(returncode: int, stderr: str) -> RuntimeError:
-    """Parse stderr to return a more specific error type."""
+    """Parse stderr to return a more specific error type.
+
+    Note: currently unused because stdout/stderr are inherited for Docker
+    log visibility. Kept for future use if we switch back to PIPE mode.
+    """
     stderr_lower = stderr.lower()
     if "cuda out of memory" in stderr_lower or "oom" in stderr_lower:
         return RuntimeError(f"CUDA OOM during Wan generation: {stderr[-500:]}")

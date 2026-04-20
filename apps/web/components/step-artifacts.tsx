@@ -12,6 +12,17 @@ import type {
 import type { ProgressArtifact } from "@/hooks/useStepProgress";
 import type { StepName } from "@/lib/services";
 
+// Global ref to track the currently playing audio element
+// so clicking play on another audio stops the previous one
+let _currentAudio: HTMLAudioElement | null = null;
+
+function handleAudioPlay(audio: HTMLAudioElement) {
+  if (_currentAudio && _currentAudio !== audio && !_currentAudio.paused) {
+    _currentAudio.pause();
+  }
+  _currentAudio = audio;
+}
+
 // ── Storyboard ────────────────────────────────────────────────────────────────
 
 interface StoryboardShot {
@@ -196,6 +207,7 @@ export function TTSArtifacts({
               controls
               src={`/api/projects/${projectId}/files/audio/${filename}`}
               className="w-full h-8"
+              onPlay={(e) => handleAudioPlay(e.currentTarget)}
             />
           </div>
         );
@@ -339,6 +351,7 @@ function ProgressArtifactsView({
                 controls
                 src={`/api/projects/${projectId}/files/audio/${filename}`}
                 className="w-full h-8"
+                onPlay={(e) => handleAudioPlay(e.currentTarget)}
               />
             </div>
           );

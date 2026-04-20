@@ -88,7 +88,8 @@ class FluxLocalProvider(ImageProvider):
 
     async def generate_shot(self, shot_id: str, prompt: str, output_path: str, config: dict) -> None:
         if self._pipe is None:
-            raise RuntimeError("Model not loaded; call load_model() first")
+            logger.warning(f"[{shot_id}] Model not loaded, auto-loading...")
+            await self.load_model()
 
         full_prompt = ANIME_PREFIX + prompt
         loop = asyncio.get_event_loop()

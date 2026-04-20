@@ -19,9 +19,13 @@ logger = logging.getLogger(__name__)
 
 _provider = get_provider()
 job_manager = JobManager()
+# Disable TTL auto-unload: GPU switching is handled by the orchestrator.
+# Long-running image generation jobs (30-60s per shot) should not be
+# interrupted by the TTL watchdog mid-job.
 model_manager = ModelManager(
     load_fn=_provider.load_model,
     unload_fn=lambda _: _provider.unload_model(),
+    ttl=None,  # No auto-unload; orchestrator calls /model/unload explicitly
 )
 
 

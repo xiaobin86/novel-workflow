@@ -46,6 +46,7 @@ async def _global(request, exc):
 class StartJobRequest(BaseModel):
     project_id: str
     config: dict = {}
+    shot_ids: list[str] | None = None  # snapshot list from frontend; None = process all shots
 
 
 @app.post("/jobs", status_code=202)
@@ -53,7 +54,9 @@ async def start_job(req: StartJobRequest):
     from job_handler import run_generate_clips_job
     job = await job_manager.submit(
         req.project_id,
-        lambda job: run_generate_clips_job(job, req.project_id, req.config, _provider),
+        lambda job: run_generate_clips_job(
+            job, req.project_id, req.config, req.shot_ids, _provider
+        ),
     )
     return {"job_id": job.job_id, "status": job.status.value}
 

@@ -187,6 +187,7 @@ function StepCard({
   starting,
   controlLoading,
   controlErrors,
+  pendingVideoShots,
   onStart,
   onStop,
   onRegenerate,
@@ -201,6 +202,7 @@ function StepCard({
   starting: StepName | null;
   controlLoading: Record<string, boolean>;
   controlErrors: Record<string, string>;
+  pendingVideoShots: string[];
   onStart: (step: StepName) => void;
   onStop: (step: StepName) => void;
   onRegenerate: (step: StepName) => Promise<void>;
@@ -223,7 +225,8 @@ function StepCard({
     if (step === "tts") return allSteps.storyboard?.status === "completed";
     if (step === "image") return allSteps.storyboard?.status === "completed";
     if (step === "video") {
-      return allSteps.image?.status === "completed" && allSteps.tts?.status === "completed";
+      // Enable as soon as at least one image exists without a matching video
+      return pendingVideoShots.length > 0;
     }
     return allSteps[STEP_ORDER[i - 1]]?.status === "completed";
   }
@@ -279,6 +282,7 @@ function StepCard({
             {starting === step ? "启动中..." :
              controlLoading[step] ? "处理中..." :
              status === "failed" ? "重试" :
+             step === "video" && status === "stopped" ? `继续生成（${pendingVideoShots.length} 个）` :
              status === "stopped" ? "重新开始" :
              canStart() ? "开始执行" : "等待前序步骤"}
           </Button>
@@ -327,7 +331,7 @@ function StepCard({
             const nextCanStart =
               nextStep === "tts" ? allSteps.storyboard?.status === "completed" :
               nextStep === "image" ? allSteps.storyboard?.status === "completed" :
-              nextStep === "video" ? allSteps.image?.status === "completed" && allSteps.tts?.status === "completed" :
+              nextStep === "video" ? pendingVideoShots.length > 0 :
               true;
             return (
               <Button
@@ -374,6 +378,12 @@ export default function ProjectPage() {
   const { state, mutate } = useProjectState(projectId);
   const { stopStep, loading: controlLoading, errors: controlErrors } = useStepControl(projectId, mutate);
   const [autoMode, toggleAutoMode] = useAutoMode(projectId);
+
+  // Pending video shots: images that exist on disk but don't have a matching clip yet.
+  // Derived from state.shot_file_counts which is recomputed on every readState() call.
+  const imageShotSet = new Set<string>(state?.shot_file_counts?.image_shots ?? []);
+  const videoShotSet = new Set<string>(state?.shot_file_counts?.video_shots ?? []);
+  const pendingVideoShots = [...imageShotSet].filter((id) => !videoShotSet.has(id));
   const [starting, setStarting] = useState<StepName | null>(null);
   const [activeStep, setActiveStep] = useState<StepName>(STEP_ORDER[0]);
   const autoRef = useRef(autoMode);
@@ -419,7 +429,8 @@ export default function ProjectPage() {
       const next = STEP_ORDER[i + 1];
       if (steps[cur]?.status === "completed" && steps[next]?.status === "pending") {
         if (next === "video") {
-          if (steps.image?.status !== "completed" || steps.tts?.status !== "completed") continue;
+          // Auto-start video only when there are images without clips
+          if (pendingVideoShots.length === 0) continue;
         }
         startStep(next);
         break;
@@ -431,10 +442,14 @@ export default function ProjectPage() {
   async function startStep(step: StepName) {
     setStarting(step);
     try {
+      // For video: snapshot the pending shot list at click time so the backend
+      // only processes the shots that have images right now (not future images).
+      const body: Record<string, unknown> =
+        step === "video" ? { shot_ids: pendingVideoShots } : {};
       await fetch(`/api/pipeline/${projectId}/${step}/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(body),
       });
       await mutate();
     } finally {
@@ -525,6 +540,7 @@ export default function ProjectPage() {
                 starting={starting}
                 controlLoading={controlLoading}
                 controlErrors={controlErrors}
+                pendingVideoShots={pendingVideoShots}
                 onStart={startStep}
                 onStop={stopStep}
                 onRegenerate={regenerateStep}

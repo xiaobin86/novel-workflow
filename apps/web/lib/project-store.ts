@@ -47,12 +47,19 @@ export interface StepState {
   updated_at: string;
 }
 
+/** Per-shot file presence on disk — computed field, never persisted to state.json */
+export interface ShotFileCounts {
+  image_shots: string[];  // shot_ids that have an image in images/
+  video_shots: string[];  // shot_ids that have a clip in clips/
+}
+
 export interface ProjectState {
   project_id: string;
   title: string;
   episode: string;
   created_at: string;
   steps: Record<StepName, StepState>;
+  shot_file_counts?: ShotFileCounts;  // computed at readState time, not stored
 }
 
 export interface ProjectMeta {
@@ -64,6 +71,22 @@ export interface ProjectMeta {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+async function computeShotFileCounts(id: string): Promise<ShotFileCounts> {
+  const dir = projectDir(id);
+  const [imgFiles, clipFiles] = await Promise.all([
+    fs.readdir(path.join(dir, "images")).catch(() => [] as string[]),
+    fs.readdir(path.join(dir, "clips")).catch(() => [] as string[]),
+  ]);
+  return {
+    image_shots: imgFiles
+      .filter((f) => /\.(png|jpg|webp)$/i.test(f))
+      .map((f) => f.replace(/\.[^.]+$/, "")),   // E01_001.png → E01_001
+    video_shots: clipFiles
+      .filter((f) => /\.mp4$/i.test(f))
+      .map((f) => f.replace(/\.mp4$/i, "")),     // E01_001.mp4 → E01_001
+  };
+}
 
 function projectDir(id: string) {
   return path.join(PROJECTS_BASE_DIR, id);
@@ -264,40 +287,45 @@ async function validateStepStatuses(id: string, state: ProjectState): Promise<bo
     // Get actual file count from disk
     const result = await recoverStepResult(id, step);
     if (!result) {
-      // No files on disk but state says non-pending → correct to pending
-      if (currentStatus !== "pending") {
-        state.steps[step].status = "pending";
-        state.steps[step].updated_at = now;
-        dirty = true;
-      }
+      // No files on disk but state says non-pending/non-in_progress → correct to pending
+      state.steps[step].status = "pending";
+      state.steps[step].updated_at = now;
+      dirty = true;
       continue;
     }
 
     // Calculate expected status based on file count
-    let actualCount = 0;
-    if (step === "image") {
-      actualCount = (result.data as ImageResult).images?.length ?? 0;
-    } else if (step === "tts") {
-      const audioFiles = (result.data as TTSResult).audio_files ?? [];
-      actualCount = new Set(audioFiles.map((f) => f.replace(/_[^_]+\.[^.]+$/, ""))).size;
-    } else if (step === "video") {
-      actualCount = (result.data as VideoResult).clips?.length ?? 0;
-    }
+    let expectedStatus: StepStatus;
 
-    const expectedStatus: StepStatus =
-      actualCount === 0
-        ? "pending"
-        : actualCount >= shotCount && shotCount > 0
-          ? "completed"
-          : "stopped";
+    if (step === "video") {
+      // video completion is relative to image count, not storyboard shot count
+      const videoCount = (result.data as VideoResult).clips?.length ?? 0;
+      const imgFiles = await fs.readdir(path.join(dir, "images")).catch(() => [] as string[]);
+      const imageCount = imgFiles.filter((f) => /\.(png|jpg|webp)$/i.test(f)).length;
+      expectedStatus =
+        imageCount === 0    ? "pending"
+        : videoCount === 0  ? "pending"
+        : videoCount >= imageCount ? "completed"
+        : "stopped";
+    } else {
+      let actualCount = 0;
+      if (step === "image") {
+        actualCount = (result.data as ImageResult).images?.length ?? 0;
+      } else if (step === "tts") {
+        const audioFiles = (result.data as TTSResult).audio_files ?? [];
+        actualCount = new Set(audioFiles.map((f) => f.replace(/_[^_]+\.[^.]+$/, ""))).size;
+      }
+      expectedStatus =
+        actualCount === 0
+          ? "pending"
+          : actualCount >= shotCount && shotCount > 0
+            ? "completed"
+            : "stopped";
+    }
 
     if (currentStatus !== expectedStatus) {
       state.steps[step].status = expectedStatus;
       state.steps[step].updated_at = now;
-      // Clear job_id when status is corrected (task was lost/restarted)
-      if (currentStatus === "in_progress" && expectedStatus !== "in_progress") {
-        state.steps[step].job_id = null;
-      }
       dirty = true;
     }
   }
@@ -342,6 +370,9 @@ export async function readState(id: string): Promise<ProjectState> {
   if (dirty) {
     await _writeAtomic(statePath(id), JSON.stringify(state, null, 2));
   }
+
+  // Attach per-shot file lists (computed, never persisted)
+  state.shot_file_counts = await computeShotFileCounts(id);
 
   return state;
 }

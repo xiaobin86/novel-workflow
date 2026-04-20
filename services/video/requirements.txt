@@ -4,6 +4,7 @@ pydantic==2.9.2
 torch==2.7.0
 
 # Wan2.1 runtime dependencies (needed by subprocess generate.py)
+numpy>=1.23.5
 easydict
 einops
 imageio

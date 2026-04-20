@@ -1,6 +1,8 @@
 FROM pytorch/pytorch:2.7.0-cuda12.8-cudnn9-devel
 WORKDIR /app
 
+ENV PYTHONUNBUFFERED=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git \
     && rm -rf /var/lib/apt/lists/*
 

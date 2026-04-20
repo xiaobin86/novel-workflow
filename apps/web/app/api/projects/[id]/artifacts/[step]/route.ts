@@ -10,9 +10,12 @@ export async function GET(
   const stepName = step as StepName;
 
   const result = await recoverStepResult(projectId, stepName);
-  if (!result) {
-    return NextResponse.json({ error: "No artifacts found" }, { status: 404 });
-  }
+  const res = result
+    ? NextResponse.json(result)
+    : NextResponse.json({ error: "No artifacts found" }, { status: 404 });
 
-  return NextResponse.json(result);
+  res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.headers.set("Pragma", "no-cache");
+  res.headers.set("Expires", "0");
+  return res;
 }

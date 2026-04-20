@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { useProjectState } from "@/hooks/useProjectState";
 import { useStepProgress } from "@/hooks/useStepProgress";
 import { useStepControl } from "@/hooks/useStepControl";
@@ -140,23 +140,34 @@ function StepArtifactsWrapper({
   projectId,
   status,
   progressArtifacts,
-  onRegenerateItem,
+  onDeleteItem,
 }: {
   step: StepName;
   projectId: string;
   status: string;
   progressArtifacts?: ReturnType<typeof useStepProgress>["artifacts"];
-  onRegenerateItem?: (shot_id: string) => void;
+  onDeleteItem?: (shot_id: string) => void;
 }) {
   const activelyRunning = status === "in_progress";
 
-  // Always fetch from disk regardless of state.json status — ensures consistency
-  // with actual files on disk.  SWR dedupes requests across re-renders.
-  const { data: diskResult } = useSWR<StepResult | null>(
-    activelyRunning ? null : `/api/projects/${projectId}/artifacts/${step}`,
+  // Always fetch from disk — ensures previously generated items are visible
+  // even after a page refresh during in_progress.
+  const { data: diskResult, mutate: mutateDisk } = useSWR<StepResult | null>(
+    `/api/projects/${projectId}/artifacts/${step}`,
     fetcher,
     { revalidateOnFocus: false }
   );
+
+  // When a new artifact is reported via progress events, re-fetch the full
+  // artifact list from disk so the UI shows all items (not just new ones).
+  const prevProgressLength = useRef(progressArtifacts?.length ?? 0);
+  useEffect(() => {
+    const currentLength = progressArtifacts?.length ?? 0;
+    if (currentLength > prevProgressLength.current) {
+      mutateDisk();
+    }
+    prevProgressLength.current = currentLength;
+  }, [progressArtifacts, mutateDisk]);
 
   const hasContent = !!diskResult || (progressArtifacts && progressArtifacts.length > 0);
   if (!hasContent) return null;
@@ -165,10 +176,10 @@ function StepArtifactsWrapper({
     <div className="mt-4 pt-4 border-t">
       <StepArtifacts
         step={step}
-        result={activelyRunning ? null : diskResult}
+        result={diskResult}
         projectId={projectId}
         progressArtifacts={progressArtifacts}
-        onRegenerateItem={activelyRunning ? undefined : onRegenerateItem}
+        onDeleteItem={activelyRunning ? undefined : onDeleteItem}
       />
     </div>
   );
@@ -190,8 +201,8 @@ function StepCard({
   pendingVideoShots,
   onStart,
   onStop,
-  onRegenerate,
-  onRegenerateItem,
+  onDelete,
+  onDeleteItem,
 }: {
   step: StepName;
   idx: number;
@@ -205,8 +216,8 @@ function StepCard({
   pendingVideoShots: string[];
   onStart: (step: StepName) => void;
   onStop: (step: StepName) => void;
-  onRegenerate: (step: StepName) => Promise<void>;
-  onRegenerateItem: (step: StepName, shot_id: string) => Promise<void>;
+  onDelete: (step: StepName) => Promise<void>;
+  onDeleteItem: (step: StepName, shot_id: string) => Promise<void>;
 }) {
   const status = stepState?.status ?? "pending";
   const isActive = ["in_progress", "stopped", "completed"].includes(status);
@@ -267,7 +278,7 @@ function StepCard({
           projectId={projectId}
           status={status}
           progressArtifacts={progress.artifacts}
-          onRegenerateItem={(shot_id) => onRegenerateItem(step, shot_id)}
+          onDeleteItem={(shot_id) => onDeleteItem(step, shot_id)}
         />
       </div>
 
@@ -305,23 +316,23 @@ function StepCard({
       {/* Bottom actions bar (completed / stopped / failed) */}
       {canRegen && (
         <div className="px-5 pb-4 flex items-center justify-between border-t pt-3 gap-2">
-          {/* Regenerate all */}
+          {/* Delete all */}
           <ConfirmDialog
-            title={`重新生成「${STEP_LABELS[step]}」`}
+            title={`删除「${STEP_LABELS[step]}」全部产物`}
             description={
               <span>
                 此操作将删除该阶段所有已生成产物，且
                 <span className="text-red-600 font-medium">不可恢复</span>
-                。确认后将立即重新执行。
+                。
               </span>
             }
-            confirmLabel="确认重新生成"
+            confirmLabel="确认删除"
             trigger={
-              <Button size="sm" variant="outline" className="text-zinc-500 hover:text-blue-600 hover:border-blue-300">
-                ↺ 重新生成全部
+              <Button size="sm" variant="outline" className="text-zinc-500 hover:text-red-500 hover:border-red-300">
+                删除全部
               </Button>
             }
-            onConfirm={() => onRegenerate(step)}
+            onConfirm={() => onDelete(step)}
           />
 
           {/* Continue to next step (non-auto mode, completed only) */}
@@ -376,6 +387,7 @@ export default function ProjectPage() {
   const params = useParams();
   const projectId = params.id as string;
   const { state, mutate } = useProjectState(projectId);
+  const { mutate: globalMutate } = useSWRConfig();
   const { stopStep, loading: controlLoading, errors: controlErrors } = useStepControl(projectId, mutate);
   const [autoMode, toggleAutoMode] = useAutoMode(projectId);
 
@@ -467,8 +479,21 @@ export default function ProjectPage() {
     await startStep(step);
   }
 
-  /** Delete a single artifact and restart the step (per-item regeneration). */
-  async function regenerateItem(step: StepName, shot_id: string) {
+  /** Delete all artifacts for a step without restarting it. */
+  async function deleteStep(step: StepName) {
+    const res = await fetch(`/api/pipeline/${projectId}/${step}/reset`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error ?? `删除失败（${res.status}）`);
+    }
+    // 先刷新项目状态，确认后端已将步骤重置为 pending（删除完成的可靠信号）
+    await mutate(undefined, { revalidate: true });
+    // 状态确认后再刷新产物列表，确保读取到最新磁盘状态
+    await globalMutate(`/api/projects/${projectId}/artifacts/${step}`, undefined, { revalidate: true });
+  }
+
+  /** Delete a single artifact file without restarting the step. */
+  async function deleteItem(step: StepName, shot_id: string) {
     const res = await fetch(`/api/pipeline/${projectId}/${step}/regenerate-item`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -476,9 +501,11 @@ export default function ProjectPage() {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.error ?? `重新生成失败（${res.status}）`);
+      throw new Error(body.error ?? `删除失败（${res.status}）`);
     }
-    await startStep(step);
+    // 先刷新项目状态，确认删除操作已完成，再刷新产物列表避免读到缓存
+    await mutate(undefined, { revalidate: true });
+    await globalMutate(`/api/projects/${projectId}/artifacts/${step}`, undefined, { revalidate: true });
   }
 
   if (!state) {
@@ -543,8 +570,8 @@ export default function ProjectPage() {
                 pendingVideoShots={pendingVideoShots}
                 onStart={startStep}
                 onStop={stopStep}
-                onRegenerate={regenerateStep}
-                onRegenerateItem={regenerateItem}
+                onDelete={deleteStep}
+                onDeleteItem={deleteItem}
               />
             ))}
           </div>

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { StepArtifacts } from "@/components/step-artifacts";
+import { StepNavigator } from "@/components/step-navigator";
 import { DeleteProjectDialog } from "@/components/delete-project-dialog";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { StepResult } from "@/lib/project-store";
@@ -231,7 +232,7 @@ function StepCard({
   const canRegen = status === "completed" || status === "stopped" || status === "failed";
 
   return (
-    <div className="bg-white border rounded-lg overflow-hidden">
+    <div id={`step-${step}`} className="bg-white border rounded-lg overflow-hidden scroll-mt-24">
       {/* Step header */}
       <div className="flex items-center gap-3 px-5 py-4 border-b">
         <span className={`text-lg font-mono w-5 ${STATUS_COLORS[status]}`}>
@@ -374,8 +375,40 @@ export default function ProjectPage() {
   const { stopStep, loading: controlLoading, errors: controlErrors } = useStepControl(projectId, mutate);
   const [autoMode, toggleAutoMode] = useAutoMode(projectId);
   const [starting, setStarting] = useState<StepName | null>(null);
+  const [activeStep, setActiveStep] = useState<StepName>(STEP_ORDER[0]);
   const autoRef = useRef(autoMode);
   autoRef.current = autoMode;
+
+  // Scroll spy: highlight the step currently in view
+  useEffect(() => {
+    if (!state) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) {
+          const stepId = visible[0].target.id.replace("step-", "") as StepName;
+          setActiveStep(stepId);
+        }
+      },
+      { rootMargin: "-100px 0px -60% 0px", threshold: 0 }
+    );
+
+    STEP_ORDER.forEach((step) => {
+      const el = document.getElementById(`step-${step}`);
+      if (el) observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+  }, [state]);
+
+  const scrollToStep = (step: StepName) => {
+    document.getElementById(`step-${step}`)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
 
   // Auto-advance: when a step completes, start the next one
   useEffect(() => {
@@ -465,25 +498,41 @@ export default function ProjectPage() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-8 py-8 space-y-4">
-        {STEP_ORDER.map((step, idx) => (
-          <StepCard
-            key={step}
-            step={step}
-            idx={idx}
-            projectId={projectId}
-            stepState={steps[step]}
-            allSteps={steps}
-            autoMode={autoMode}
-            starting={starting}
-            controlLoading={controlLoading}
-            controlErrors={controlErrors}
-            onStart={startStep}
-            onStop={stopStep}
-            onRegenerate={regenerateStep}
-            onRegenerateItem={regenerateItem}
-          />
-        ))}
+      <main className="max-w-7xl mx-auto px-8 py-8">
+        <div className="flex gap-6">
+          {/* Left sidebar navigation */}
+          <aside className="hidden lg:block w-60 shrink-0">
+            <div className="sticky top-8">
+              <StepNavigator
+                steps={steps}
+                activeStep={activeStep}
+                onStepClick={scrollToStep}
+              />
+            </div>
+          </aside>
+
+          {/* Right content area */}
+          <div className="flex-1 space-y-4">
+            {STEP_ORDER.map((step, idx) => (
+              <StepCard
+                key={step}
+                step={step}
+                idx={idx}
+                projectId={projectId}
+                stepState={steps[step]}
+                allSteps={steps}
+                autoMode={autoMode}
+                starting={starting}
+                controlLoading={controlLoading}
+                controlErrors={controlErrors}
+                onStart={startStep}
+                onStop={stopStep}
+                onRegenerate={regenerateStep}
+                onRegenerateItem={regenerateItem}
+              />
+            ))}
+          </div>
+        </div>
       </main>
     </div>
   );

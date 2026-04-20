@@ -84,7 +84,7 @@ function emptySteps(): Record<StepName, StepState> {
 // ── Recovery helpers ───────────────────────────────────────────────────────────
 
 /** Scan disk artifacts for one step and reconstruct its StepResult. */
-async function recoverStepResult(id: string, step: StepName): Promise<StepResult | null> {
+export async function recoverStepResult(id: string, step: StepName): Promise<StepResult | null> {
   const dir = projectDir(id);
   try {
     switch (step) {

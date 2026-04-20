@@ -55,15 +55,13 @@ export async function GET(
 
               // Update state.json on terminal events
               if (event === "complete") {
-                const parsed = JSON.parse(data);
-                // Wrap raw backend result in { type, data } so it matches StepResult
-                const rawResult = parsed.result ?? null;
-                const wrappedResult = rawResult
-                  ? { type: stepName, data: rawResult }
-                  : null;
+                // Always rebuild result from disk so partial regenerations (where only
+                // a subset of shots was re-generated) still get a full, accurate result.
+                const { recoverStepResult } = await import("@/lib/project-store");
+                const diskResult = await recoverStepResult(projectId, stepName);
                 await updateStep(projectId, stepName, {
                   status: "completed",
-                  result: wrappedResult as import("@/lib/project-store").StepResult | null,
+                  result: diskResult,
                 });
                 done = true;
               } else if (event === "stopped") {

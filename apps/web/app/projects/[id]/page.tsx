@@ -10,6 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { StepArtifacts } from "@/components/step-artifacts";
 import { DeleteProjectDialog } from "@/components/delete-project-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { StepResult } from "@/lib/project-store";
 
 // ── Auto-mode hook ─────────────────────────────────────────────────────────────
@@ -140,12 +141,14 @@ function StepArtifactsWrapper({
   status,
   result,
   progressArtifacts,
+  onRegenerateItem,
 }: {
   step: StepName;
   projectId: string;
   status: string;
   result?: StepResult | null;
   progressArtifacts?: ReturnType<typeof useStepProgress>["artifacts"];
+  onRegenerateItem?: (shot_id: string) => void;
 }) {
   const show = ["completed", "stopped", "in_progress", "paused"].includes(status);
   if (!show) return null;
@@ -162,6 +165,7 @@ function StepArtifactsWrapper({
         result={displayResult}
         projectId={projectId}
         progressArtifacts={progressArtifacts}
+        onRegenerateItem={activelyRunning ? undefined : onRegenerateItem}
       />
     </div>
   );
@@ -184,6 +188,8 @@ function StepCard({
   onPause,
   onResume,
   onStop,
+  onRegenerate,
+  onRegenerateItem,
 }: {
   step: StepName;
   idx: number;
@@ -198,6 +204,8 @@ function StepCard({
   onPause: (step: StepName) => void;
   onResume: (step: StepName) => void;
   onStop: (step: StepName) => void;
+  onRegenerate: (step: StepName) => Promise<void>;
+  onRegenerateItem: (step: StepName, shot_id: string) => Promise<void>;
 }) {
   const status = stepState?.status ?? "pending";
   const isActive = ["in_progress", "paused", "stopped", "completed"].includes(status);
@@ -222,6 +230,7 @@ function StepCard({
   }
 
   const nextStep = STEP_ORDER[idx + 1] as StepName | undefined;
+  const canRegen = status === "completed" || status === "stopped" || status === "failed";
 
   return (
     <div className="bg-white border rounded-lg overflow-hidden">
@@ -259,6 +268,7 @@ function StepCard({
           status={status}
           result={stepState.result}
           progressArtifacts={progress.artifacts}
+          onRegenerateItem={(shot_id) => onRegenerateItem(step, shot_id)}
         />
       </div>
 
@@ -311,15 +321,59 @@ function StepCard({
         </div>
       )}
 
-      {/* Confirm to proceed (non-auto mode, step completed) */}
-      {status === "completed" && !autoMode && nextStep && (() => {
+      {/* Bottom actions bar (completed / stopped / failed) */}
+      {canRegen && (
+        <div className="px-5 pb-4 flex items-center justify-between border-t pt-3 gap-2">
+          {/* Regenerate all */}
+          <ConfirmDialog
+            title={`重新生成「${STEP_LABELS[step]}」`}
+            description={
+              <span>
+                此操作将删除该阶段所有已生成产物，且
+                <span className="text-red-600 font-medium">不可恢复</span>
+                。确认后将立即重新执行。
+              </span>
+            }
+            confirmLabel="确认重新生成"
+            trigger={
+              <Button size="sm" variant="outline" className="text-zinc-500 hover:text-blue-600 hover:border-blue-300">
+                ↺ 重新生成全部
+              </Button>
+            }
+            onConfirm={() => onRegenerate(step)}
+          />
+
+          {/* Continue to next step (non-auto mode, completed only) */}
+          {status === "completed" && !autoMode && nextStep && (() => {
+            const nextStatus = allSteps[nextStep]?.status;
+            if (nextStatus !== "pending" && nextStatus !== "stopped") return null;
+            const nextCanStart =
+              nextStep === "tts" ? allSteps.storyboard?.status === "completed" :
+              nextStep === "image" ? allSteps.storyboard?.status === "completed" :
+              nextStep === "video" ? allSteps.image?.status === "completed" && allSteps.tts?.status === "completed" :
+              true;
+            return (
+              <Button
+                size="sm"
+                disabled={!nextCanStart || starting === nextStep}
+                onClick={() => onStart(nextStep)}
+              >
+                确认并继续 → {STEP_LABELS[nextStep]}
+              </Button>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Continue to next step without regenerate bar (pending step completed, non-auto) */}
+      {!canRegen && status === "completed" && !autoMode && nextStep && (() => {
         const nextStatus = allSteps[nextStep]?.status;
         if (nextStatus !== "pending" && nextStatus !== "stopped") return null;
         const nextCanStart =
           nextStep === "tts" ? allSteps.storyboard?.status === "completed" :
           nextStep === "image" ? allSteps.storyboard?.status === "completed" :
           nextStep === "video" ? allSteps.image?.status === "completed" && allSteps.tts?.status === "completed" :
-          status === "completed";
+          true;
         return (
           <div className="px-5 pb-4 flex justify-end border-t pt-3">
             <Button
@@ -378,6 +432,30 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     }
   }
 
+  /** Reset all artifacts for a step, then restart it (step-level regeneration). */
+  async function regenerateStep(step: StepName) {
+    const res = await fetch(`/api/pipeline/${projectId}/${step}/reset`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error ?? `重置失败（${res.status}）`);
+    }
+    await startStep(step);
+  }
+
+  /** Delete a single artifact and restart the step (per-item regeneration). */
+  async function regenerateItem(step: StepName, shot_id: string) {
+    const res = await fetch(`/api/pipeline/${projectId}/${step}/regenerate-item`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shot_id }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error ?? `重新生成失败（${res.status}）`);
+    }
+    await startStep(step);
+  }
+
   if (!state) {
     return <div className="p-8 text-zinc-400">加载中...</div>;
   }
@@ -427,6 +505,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             onPause={pauseStep}
             onResume={resumeStep}
             onStop={stopStep}
+            onRegenerate={regenerateStep}
+            onRegenerateItem={regenerateItem}
           />
         ))}
       </main>

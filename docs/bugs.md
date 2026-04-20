@@ -109,12 +109,44 @@ if model_manager is not None:
     await model_manager.get()
 ```
 
+### 后续更彻底的修复（2026-04-21）
+
+**commit**: `9f7c236` fix(image): disable TTL auto-unload and add auto-reload on missing model
+
+BUG-002 的原始修复（调用方刷新 TTL）仍存在隐患：
+- 生成过程中 orchestrator 可能调用 `/model/unload` 切换 GPU 到 video-service
+- TTL watchdog 本身的调度不确定性（asyncio 事件循环阻塞时计时器不准）
+
+**更彻底的方案**（双保险）：
+
+1. **禁用 TTL 自动卸载**（`services/image/main.py`）
+   ```python
+   model_manager = ModelManager(
+       load_fn=_provider.load_model,
+       unload_fn=lambda _: _provider.unload_model(),
+       ttl=None,  # No auto-unload; orchestrator calls /model/unload explicitly
+   )
+   ```
+   - GPU 切换由 orchestrator 显式控制，服务内部不应自动卸载
+
+2. **防御性自动重新加载**（`services/image/providers/flux_local.py`）
+   ```python
+   async def generate_shot(self, shot_id: str, prompt: str, output_path: str, config: dict) -> None:
+       if self._pipe is None:
+           logger.warning(f"[{shot_id}] Model not loaded, auto-loading...")
+           await self.load_model()
+       # ... 继续生成
+   ```
+   - 即使模型被意外卸载，生成时自动重新加载，而不是抛错
+   - 对用户体验无影响（只是多等一次模型加载时间）
+
 ### 预防建议
 
 1. **Provider 接口约定**：所有 GPU provider 的生成方法应在内部调用 `model_manager.get()`，而非依赖调用方
 2. **TTL 配置显式化**：在 `.env` 中暴露 `MODEL_TTL_SECONDS`，让用户根据生成速度调整
 3. **超时日志**：TTL watchdog 卸载模型前应 WARN 级别日志，便于排查
 4. **生成前断言**：`generate_shot()` 开始时应断言 `_pipe is not None`，失败时自动重新加载
+5. **禁用自动卸载优先**：GPU 串行执行的场景下，服务不应自动卸载模型，切换应由 orchestrator 控制
 
 ---
 
@@ -281,5 +313,98 @@ docker compose up -d tts-service
 
 ---
 
-*最后更新：2026-04-20*  
+## BUG-005: video-service subprocess 失败时抛出 NameError: name 'stderr' is not defined
+
+**日期**: 2026-04-21  
+**涉及模块**: `services/video/providers/wan_local.py`  
+**关键词**: `#subprocess` `#docker` `#variable-scope` `#name-error` `#refactoring-regression`
+
+### 现象
+- video-service 的 Wan 子进程（generate.py）失败时（如 CUDA OOM、checkpoint 缺失），抛出 `NameError: name 'stderr' is not defined`
+- 错误发生在 `proc.returncode != 0` 的检查逻辑中，导致无法正确报告子进程失败原因
+- 实际子进程的错误信息（如 OOM 日志）被 NameError 掩盖，排错困难
+
+### 根因
+
+**代码重构时变量作用域遗漏**。
+
+之前的修复（BUG-004）将 subprocess stdout/stderr 从 PIPE 模式改为**继承父进程模式**（`stdout=None, stderr=None`）：
+```python
+# 修改前（PIPE 模式）
+proc = await asyncio.create_subprocess_exec(
+    *cmd,
+    stdout=asyncio.subprocess.PIPE,
+    stderr=asyncio.subprocess.PIPE,
+)
+stdout, stderr = await proc.communicate()  # stderr 变量在这里定义
+
+# 修改后（继承模式，Docker 日志可见）
+proc = await asyncio.create_subprocess_exec(
+    *cmd,
+    stdout=None,  # 继承父进程
+    stderr=None,  # 继承父进程
+)
+# 没有 stdout/stderr 变量，Docker 直接捕获输出
+```
+
+但 `returncode != 0` 的处理逻辑**未同步更新**：
+```python
+# 错误代码（未修改）
+if proc.returncode != 0:
+    err_text = stderr.decode(errors="replace")[-800:] if stderr else ""  # NameError!
+    raise _classify_error(proc.returncode, err_text)
+```
+
+在继承模式下，`stderr` 变量从未被定义，导致 `NameError` 在错误处理路径上被触发。
+
+### 排查过程
+
+1. 启动 video generation，观察 Docker 日志
+2. 子进程正常启动并输出到日志，但 `returncode != 0` 时抛出 NameError
+3. 检查代码发现 `stderr` 变量仅在 PIPE 模式下由 `proc.communicate()` 返回，继承模式下不存在
+4. 修复：移除对 `stderr` 变量的依赖，改为提示用户查看 Docker 日志（日志已包含子进程输出）
+
+### 最终解决方案
+
+**commit**: `1b7ddc9` fix(video): resolve undefined stderr variable when subprocess fails
+
+修改 `services/video/providers/wan_local.py`：
+
+```python
+# 修改前
+if proc.returncode != 0:
+    err_text = stderr.decode(errors="replace")[-800:] if stderr else ""
+    raise _classify_error(proc.returncode, err_text)
+
+# 修改后
+if proc.returncode != 0:
+    # stdout/stderr are inherited (not piped) so Docker logs capture them in real time.
+    # We cannot read the streams here, but the logs already contain the details.
+    raise RuntimeError(
+        f"Wan generate.py failed with exit code {proc.returncode}. "
+        f"Check Docker logs for subprocess output (shot_id={shot_id})"
+    )
+```
+
+同时更新 `_classify_error()` 的文档注释，说明当前未使用但保留供未来参考：
+```python
+def _classify_error(returncode: int, stderr: str) -> RuntimeError:
+    """Parse stderr to return a more specific error type.
+    
+    Note: currently unused because stdout/stderr are inherited for Docker
+    log visibility. Kept for future use if we switch back to PIPE mode.
+    """
+```
+
+### 预防建议
+
+1. **模式切换时同步更新所有相关代码**：subprocess 从 PIPE 改为继承/重定向时，必须检查所有引用 stdout/stderr 变量的代码路径
+2. **类型检查工具**：使用 mypy 等静态类型检查器可以发现未定义变量（`stderr` 在继承模式下未声明类型）
+3. **错误路径测试**：CI/CD 中应包含 subprocess 失败场景的测试，确保错误处理逻辑本身不会抛错
+4. **代码审查清单**：涉及 subprocess 的 PR 应检查——(a) 变量定义与使用一致 (b) 错误处理路径覆盖 (c) 日志输出可见性
+5. **防御性编程**：错误处理代码应假设自身可能出错，避免在 catch 块中引入新的异常
+
+---
+
+*最后更新：2026-04-21*  
 *维护者：Sisyphus Agent*

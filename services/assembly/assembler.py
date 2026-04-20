@@ -11,7 +11,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from mutagen.wave import WAVE
+from mutagen.mp3 import MP3
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ async def assemble(
     if missing:
         raise ValueError(f"缺失素材文件：{', '.join(missing)}")
 
-    # Step 2 — Read actual audio durations from WAV files
+    # Step 2 — Read actual audio durations from MP3 files
     await on_progress(phase="reading_durations", message="读取音频时长")
     shot_durations = _read_audio_durations(shots, audio_dir)
 
@@ -51,7 +51,7 @@ async def assemble(
     for i, shot in enumerate(shots):
         shot_id = shot["shot_id"]
         clip_path = clips_dir / f"{shot_id}.mp4"
-        action_wav = audio_dir / f"{shot_id}_action.wav"
+        action_mp3 = audio_dir / f"{shot_id}_action.mp3"
 
         aligned_path = tmp_dir / f"{shot_id}_aligned.mp4"
         await on_progress(
@@ -60,7 +60,7 @@ async def assemble(
             done=i + 1, total=len(shots),
         )
         final_dur = await align_clip_duration(
-            str(clip_path), str(action_wav) if action_wav.exists() else None,
+            str(clip_path), str(action_mp3) if action_mp3.exists() else None,
             str(aligned_path), shot_durations[i],
         )
         shot_durations[i] = final_dur
@@ -106,11 +106,11 @@ def validate_assets(project_dir: Path, shots: list[dict]) -> list[str]:
     for shot in shots:
         sid = shot["shot_id"]
         clip = project_dir / "clips" / f"{sid}.mp4"
-        action = project_dir / "audio" / f"{sid}_action.wav"
+        action = project_dir / "audio" / f"{sid}_action.mp3"
         if not (clip.exists() and clip.stat().st_size > 0):
             missing.append(f"clips/{sid}.mp4")
         if not (action.exists() and action.stat().st_size > 0):
-            missing.append(f"audio/{sid}_action.wav")
+            missing.append(f"audio/{sid}_action.mp3")
     return missing
 
 
@@ -120,11 +120,11 @@ def _read_audio_durations(shots: list[dict], audio_dir: Path) -> list[float]:
     durations = []
     for shot in shots:
         sid = shot["shot_id"]
-        action_wav = audio_dir / f"{sid}_action.wav"
-        dialogue_wav = audio_dir / f"{sid}_dialogue.wav"
+        action_mp3 = audio_dir / f"{sid}_action.mp3"
+        dialogue_mp3 = audio_dir / f"{sid}_dialogue.mp3"
 
-        action_dur = float(WAVE(str(action_wav)).info.length) if action_wav.exists() else 0.0
-        dialogue_dur = float(WAVE(str(dialogue_wav)).info.length) if dialogue_wav.exists() else 0.0
+        action_dur = float(MP3(str(action_mp3)).info.length) if action_mp3.exists() else 0.0
+        dialogue_dur = float(MP3(str(dialogue_mp3)).info.length) if dialogue_mp3.exists() else 0.0
         tts_dur = max(action_dur, dialogue_dur)
 
         declared = float(shot.get("duration", 4.0))
@@ -137,7 +137,7 @@ def _read_audio_durations(shots: list[dict], audio_dir: Path) -> list[float]:
 
 async def align_clip_duration(
     clip_path: str,
-    action_wav: str | None,
+    action_audio: str | None,
     output_path: str,
     target_duration: float,
 ) -> float:
@@ -219,8 +219,8 @@ async def mix_audio(
 
     for i, (shot, dur) in enumerate(zip(shots, shot_durations)):
         sid = shot["shot_id"]
-        action_path = os.path.join(audio_dir, f"{sid}_action.wav")
-        dialogue_path = os.path.join(audio_dir, f"{sid}_dialogue.wav")
+        action_path = os.path.join(audio_dir, f"{sid}_action.mp3")
+        dialogue_path = os.path.join(audio_dir, f"{sid}_dialogue.mp3")
 
         if os.path.exists(action_path):
             idx = len(inputs) // 2

@@ -84,15 +84,12 @@ services:
       retries: 3
 
   # ── tts-service ─────────────────────────────────────────────────────────────
-  # Note: Uses host network mode to bypass Docker NAT restrictions
-  # that cause 403 Forbidden from Microsoft Edge TTS service.
-  # With host networking, the service binds directly to host port 8003.
   tts-service:
     build:
       context: ./services
       dockerfile: tts/Dockerfile
-    network_mode: host
-    # ports mapping not used with host network; service binds directly to host port
+    ports:
+      - "8003:8000"
     volumes:
       - *projects-vol
     environment:
@@ -100,11 +97,9 @@ services:
       TTS_PROVIDER: ${TTS_PROVIDER:-edge_tts}
       TTS_ACTION_VOICE: ${TTS_ACTION_VOICE:-zh-CN-YunxiNeural}
       TTS_DIALOGUE_VOICE: ${TTS_DIALOGUE_VOICE:-zh-CN-XiaoxiaoNeural}
-      # Bind to port 8003 to avoid conflict with other services on host network
-      PORT: 8003
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -1,6 +1,4 @@
 import asyncio
-import struct
-import wave
 import os
 
 from .base import TTSProvider
@@ -18,14 +16,18 @@ class MockTTSProvider(TTSProvider):
     async def synthesize(self, text: str, voice: str, output_path: str) -> float:
         await asyncio.sleep(0.1)
         duration = max(1.0, len(text) * 0.05)  # rough estimate
-        _write_silent_wav(output_path, duration)
+        _write_silent_mp3(output_path, duration)
         return duration
 
 
-def _write_silent_wav(path: str, duration: float, sample_rate: int = 22050):
-    num_samples = int(sample_rate * duration)
-    with wave.open(path, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(b"\x00\x00" * num_samples)
+def _write_silent_mp3(path: str, duration: float, sample_rate: int = 22050):
+    """Generate a silent MP3 file using ffmpeg."""
+    import subprocess
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", f"anullsrc=r={sample_rate}:cl=mono",
+        "-t", str(duration),
+        "-acodec", "libmp3lame", "-q:a", "4",
+        path,
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)

@@ -316,7 +316,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.9.2
-mutagen==1.47.0      # 读取 WAV 时长
+mutagen==1.47.0      # 读取 MP3 时长
 ```
 
 ---

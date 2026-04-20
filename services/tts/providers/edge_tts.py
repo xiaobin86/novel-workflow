@@ -3,7 +3,7 @@ import logging
 import os
 
 import edge_tts
-from mutagen.wave import WAVE
+from mutagen.mp3 import MP3
 
 from .base import TTSProvider
 
@@ -35,17 +35,17 @@ class EdgeTTSProvider(TTSProvider):
             tmp_dir = tempfile.mkdtemp()
             tmp_files = []
             for i, chunk in enumerate(chunks):
-                tmp_path = os.path.join(tmp_dir, f"chunk_{i}.wav")
+                tmp_path = os.path.join(tmp_dir, f"chunk_{i}.mp3")
                 await self._synthesize_chunk(chunk, voice, tmp_path)
                 tmp_files.append(tmp_path)
-            await _concat_wavs(tmp_files, output_path)
+            await _concat_mp3s(tmp_files, output_path)
             for f in tmp_files:
                 try:
                     os.unlink(f)
                 except OSError:
                     pass
 
-        audio = WAVE(output_path)
+        audio = MP3(output_path)
         return float(audio.info.length)
 
     async def _synthesize_chunk(self, text: str, voice: str, output_path: str):
@@ -79,7 +79,7 @@ def _split_text(text: str, max_len: int) -> list[str]:
     return chunks or [text]
 
 
-async def _concat_wavs(input_paths: list[str], output_path: str):
+async def _concat_mp3s(input_paths: list[str], output_path: str):
     import tempfile
     list_file = tempfile.mktemp(suffix=".txt")
     with open(list_file, "w") as f:

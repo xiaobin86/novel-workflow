@@ -563,6 +563,6 @@ async def shutdown_event():
 |------|----|----|
 | storyboard | input.txt | storyboard.json |
 | image | storyboard.json | images/E01_NNN.png |
-| tts | storyboard.json | audio/E01_NNN_action.wav, audio/E01_NNN_dialogue.wav |
+| tts | storyboard.json | audio/E01_NNN_action.mp3, audio/E01_NNN_dialogue.mp3 |
 | video | storyboard.json, audio/ | clips/E01_NNN.mp4 |
 | assembly | storyboard.json, images/, audio/, clips/ | output/final.mp4, output/final.srt |

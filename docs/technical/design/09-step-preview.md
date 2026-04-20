@@ -396,7 +396,7 @@ function AssemblyArtifacts({ projectId, result }: { projectId: string; result?: 
 
 ```typescript
 // GET /api/projects/{id}/files/{...path}
-// Content-Type 自动推断：.png → image/png, .mp4 → video/mp4, .wav → audio/wav
+// Content-Type 自动推断：.png → image/png, .mp4 → video/mp4, .mp3 → audio/mpeg
 ```
 
 所有产物预览均通过此 API 访问，无需新增路由：

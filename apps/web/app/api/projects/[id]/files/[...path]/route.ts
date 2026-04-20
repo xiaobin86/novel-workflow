@@ -7,7 +7,7 @@ const MIME: Record<string, string> = {
   ".png":  "image/png",
   ".jpg":  "image/jpeg",
   ".mp4":  "video/mp4",
-  ".wav":  "audio/wav",
+  ".mp3":  "audio/mpeg",
   ".srt":  "text/plain",
   ".json": "application/json",
 };

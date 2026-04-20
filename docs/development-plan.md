@@ -436,7 +436,7 @@ Phase 1: [1.1] → [1.2 + 1.3 + 1.4]
 |------|----------|----------|
 | storyboard-service | 返回预定义的 storyboard.json | `fixtures/mock_storyboard.json` |
 | image-service | 复制预置的 PNG 图片 | `fixtures/mock_images/*.png` |
-| tts-service | 复制预置的 WAV 音频 | `fixtures/mock_audio/*.wav` |
+| tts-service | 复制预置的 MP3 音频 | `fixtures/mock_audio/*.mp3` |
 | video-service | 复制预置的 MP4 视频 | `fixtures/mock_clips/*.mp4` |
 | assembly-service | 复制预置的 final.mp4 | `fixtures/mock_output/final.mp4` |
 

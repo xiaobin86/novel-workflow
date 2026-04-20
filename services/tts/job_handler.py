@@ -2,8 +2,8 @@
 tts-service job handler.
 
 For each shot:
-  - Synthesize action (narration) WAV
-  - Synthesize dialogue WAV (if present)
+  - Synthesize action (narration) MP3
+  - Synthesize dialogue MP3 (if present)
   - Record actual durations to audio_durations.json
 """
 import json

@@ -147,6 +147,42 @@ async function recoverStepResult(id: string, step: StepName): Promise<StepResult
   return null;
 }
 
+/**
+ * Determine the correct status for a recovered step:
+ * - storyboard / assembly: always "completed" (generated atomically)
+ * - image / tts / video: compare file count against storyboard shot count
+ *   → equal  → "completed"
+ *   → partial → "stopped"
+ */
+async function recoverStepStatus(
+  dir: string,
+  step: StepName,
+  result: StepResult,
+  shotCount: number,
+): Promise<StepStatus> {
+  if (step === "storyboard" || step === "assembly") return "completed";
+
+  switch (step) {
+    case "image": {
+      const count = (result.data as { images: unknown[] }).images?.length ?? 0;
+      return count >= shotCount && shotCount > 0 ? "completed" : "stopped";
+    }
+    case "tts": {
+      // Count unique shot IDs covered by audio files
+      const audioFiles = (result.data as { audio_files: string[] }).audio_files ?? [];
+      const uniqueShots = new Set(audioFiles.map((f) => f.replace(/_[^_]+\.[^.]+$/, "")));
+      return uniqueShots.size >= shotCount && shotCount > 0 ? "completed" : "stopped";
+    }
+    case "video": {
+      const count = (result.data as { clips: unknown[] }).clips?.length ?? 0;
+      return count >= shotCount && shotCount > 0 ? "completed" : "stopped";
+    }
+  }
+  return "stopped";
+  // suppress TS exhaustive warning
+  void dir;
+}
+
 /** Reconstruct a full ProjectState from disk artifacts when state.json is missing. */
 async function recoverStateFromDisk(id: string): Promise<ProjectState | null> {
   const dir = projectDir(id);
@@ -156,13 +192,15 @@ async function recoverStateFromDisk(id: string): Promise<ProjectState | null> {
     return null;
   }
 
-  // Try to get title/episode from storyboard.json
+  // Try to get title/episode and shot count from storyboard.json
   let title = id;
   let episode = "E01";
+  let shotCount = 0;
   try {
     const sb = JSON.parse(await fs.readFile(path.join(dir, "storyboard.json"), "utf-8"));
     if (sb.project?.title) title = sb.project.title;
     if (sb.project?.episode != null) episode = `E${String(sb.project.episode).padStart(2, "0")}`;
+    shotCount = sb.shots?.length ?? 0;
   } catch {}
 
   const now = new Date().toISOString();
@@ -171,7 +209,8 @@ async function recoverStateFromDisk(id: string): Promise<ProjectState | null> {
   for (const step of STEP_ORDER) {
     const result = await recoverStepResult(id, step);
     if (result) {
-      steps[step] = { status: "completed", job_id: null, updated_at: now, result };
+      const status = await recoverStepStatus(dir, step, result, shotCount);
+      steps[step] = { status, job_id: null, updated_at: now, result };
     }
   }
 
@@ -216,11 +255,12 @@ export async function readState(id: string): Promise<ProjectState> {
     throw err;
   }
 
-  // Fill in missing / migrate old-format results for completed steps
+  // Fill in missing / migrate old-format results for terminal steps
   let dirty = false;
   for (const step of STEP_ORDER) {
     const s = state.steps[step];
-    if (s?.status !== "completed") continue;
+    // Only fix completed/stopped/failed steps — never touch in_progress or paused
+    if (!s || !["completed", "stopped", "failed"].includes(s.status)) continue;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const raw = s.result as any;

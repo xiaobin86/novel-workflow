@@ -7,61 +7,39 @@ export function useStepControl(
   mutateState: () => Promise<void>
 ) {
   const [loading, setLoading] = useState<Record<string, boolean>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const setLoadingFor = (step: StepName, value: boolean) => {
+  const setLoadingFor = (step: StepName, value: boolean) =>
     setLoading((prev) => ({ ...prev, [step]: value }));
-  };
 
-  const pauseStep = useCallback(
-    async (step: StepName) => {
-      setLoadingFor(step, true);
-      try {
-        const res = await fetch(
-          `/api/pipeline/${projectId}/${step}/pause`,
-          { method: "POST" }
-        );
-        if (!res.ok) throw new Error(await res.text());
-        await mutateState();
-      } finally {
-        setLoadingFor(step, false);
+  const setErrorFor = (step: StepName, msg: string) =>
+    setErrors((prev) => ({ ...prev, [step]: msg }));
+
+  const clearError = (step: StepName) =>
+    setErrors((prev) => { const n = { ...prev }; delete n[step]; return n; });
+
+  async function callControl(step: StepName, action: "pause" | "resume" | "stop") {
+    setLoadingFor(step, true);
+    clearError(step);
+    try {
+      const res = await fetch(`/api/pipeline/${projectId}/${step}/${action}`, { method: "POST" });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const body = await res.json(); msg = body.error ?? msg; } catch { /* ignore */ }
+        setErrorFor(step, msg);
+        return;
       }
-    },
-    [projectId, mutateState]
-  );
+      await mutateState();
+    } catch (e) {
+      setErrorFor(step, e instanceof Error ? e.message : "网络错误");
+    } finally {
+      setLoadingFor(step, false);
+    }
+  }
 
-  const resumeStep = useCallback(
-    async (step: StepName) => {
-      setLoadingFor(step, true);
-      try {
-        const res = await fetch(
-          `/api/pipeline/${projectId}/${step}/resume`,
-          { method: "POST" }
-        );
-        if (!res.ok) throw new Error(await res.text());
-        await mutateState();
-      } finally {
-        setLoadingFor(step, false);
-      }
-    },
-    [projectId, mutateState]
-  );
+  const pauseStep  = useCallback((step: StepName) => callControl(step, "pause"),  [projectId, mutateState]);
+  const resumeStep = useCallback((step: StepName) => callControl(step, "resume"), [projectId, mutateState]);
+  const stopStep   = useCallback((step: StepName) => callControl(step, "stop"),   [projectId, mutateState]);
 
-  const stopStep = useCallback(
-    async (step: StepName) => {
-      setLoadingFor(step, true);
-      try {
-        const res = await fetch(
-          `/api/pipeline/${projectId}/${step}/stop`,
-          { method: "POST" }
-        );
-        if (!res.ok) throw new Error(await res.text());
-        await mutateState();
-      } finally {
-        setLoadingFor(step, false);
-      }
-    },
-    [projectId, mutateState]
-  );
-
-  return { pauseStep, resumeStep, stopStep, loading };
+  return { pauseStep, resumeStep, stopStep, loading, errors };
 }

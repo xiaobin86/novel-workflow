@@ -174,6 +174,7 @@ function StepCard({
   autoMode,
   starting,
   controlLoading,
+  controlErrors,
   onStart,
   onPause,
   onResume,
@@ -187,6 +188,7 @@ function StepCard({
   autoMode: boolean;
   starting: StepName | null;
   controlLoading: Record<string, boolean>;
+  controlErrors: Record<string, string>;
   onStart: (step: StepName) => void;
   onPause: (step: StepName) => void;
   onResume: (step: StepName) => void;
@@ -273,24 +275,34 @@ function StepCard({
       )}
 
       {status === "in_progress" && (
-        <div className="px-5 pb-4 flex justify-end gap-2">
-          <Button size="sm" variant="outline" disabled={!!controlLoading[step]} onClick={() => onPause(step)}>
-            {controlLoading[step] ? "处理中..." : "⏸ 暂停"}
-          </Button>
-          <Button size="sm" variant="destructive" disabled={!!controlLoading[step]} onClick={() => onStop(step)}>
-            {controlLoading[step] ? "处理中..." : "■ 停止"}
-          </Button>
+        <div className="px-5 pb-4 space-y-2">
+          {controlErrors[step] && (
+            <p className="text-xs text-red-500 text-right">{controlErrors[step]}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="outline" disabled={!!controlLoading[step]} onClick={() => onPause(step)}>
+              {controlLoading[step] ? "处理中..." : "⏸ 暂停"}
+            </Button>
+            <Button size="sm" variant="destructive" disabled={!!controlLoading[step]} onClick={() => onStop(step)}>
+              {controlLoading[step] ? "处理中..." : "■ 停止"}
+            </Button>
+          </div>
         </div>
       )}
 
       {status === "paused" && (
-        <div className="px-5 pb-4 flex justify-end gap-2">
-          <Button size="sm" variant="outline" disabled={!!controlLoading[step]} onClick={() => onResume(step)}>
-            {controlLoading[step] ? "处理中..." : "▶ 继续"}
-          </Button>
-          <Button size="sm" variant="destructive" disabled={!!controlLoading[step]} onClick={() => onStop(step)}>
-            {controlLoading[step] ? "处理中..." : "■ 停止"}
-          </Button>
+        <div className="px-5 pb-4 space-y-2">
+          {controlErrors[step] && (
+            <p className="text-xs text-red-500 text-right">{controlErrors[step]}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="outline" disabled={!!controlLoading[step]} onClick={() => onResume(step)}>
+              {controlLoading[step] ? "处理中..." : "▶ 继续"}
+            </Button>
+            <Button size="sm" variant="destructive" disabled={!!controlLoading[step]} onClick={() => onStop(step)}>
+              {controlLoading[step] ? "处理中..." : "■ 停止"}
+            </Button>
+          </div>
         </div>
       )}
 
@@ -323,7 +335,7 @@ function StepCard({
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: projectId } = use(params);
   const { state, mutate } = useProjectState(projectId);
-  const { pauseStep, resumeStep, stopStep, loading: controlLoading } = useStepControl(projectId, mutate);
+  const { pauseStep, resumeStep, stopStep, loading: controlLoading, errors: controlErrors } = useStepControl(projectId, mutate);
   const [autoMode, toggleAutoMode] = useAutoMode(projectId);
   const [starting, setStarting] = useState<StepName | null>(null);
   const autoRef = useRef(autoMode);
@@ -396,6 +408,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             autoMode={autoMode}
             starting={starting}
             controlLoading={controlLoading}
+            controlErrors={controlErrors}
             onStart={startStep}
             onPause={pauseStep}
             onResume={resumeStep}

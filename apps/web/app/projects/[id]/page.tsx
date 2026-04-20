@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { StepArtifacts } from "@/components/step-artifacts";
+import { DeleteProjectDialog } from "@/components/delete-project-dialog";
 import type { StepResult } from "@/lib/project-store";
 
 // ── Auto-mode hook ─────────────────────────────────────────────────────────────
@@ -385,7 +386,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         <Link href="/projects" className="text-sm text-zinc-500 hover:text-zinc-800">← 项目列表</Link>
         <span className="text-zinc-300">|</span>
         <h1 className="text-lg font-semibold">{state.title} — {state.episode}</h1>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
+          <DeleteProjectDialog
+            projectId={projectId}
+            projectTitle={`${state.title} — ${state.episode}`}
+            trigger={
+              <Button size="sm" variant="ghost" className="text-zinc-400 hover:text-red-500 hover:bg-red-50">
+                删除项目
+              </Button>
+            }
+          />
           <span className="text-sm text-zinc-500">自动模式</span>
           <button
             onClick={toggleAutoMode}

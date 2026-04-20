@@ -47,13 +47,13 @@ async def run_tts_job(job: JobRecord, project_id: str, provider: TTSProvider):
         shot_id = shot["shot_id"]
 
         # ── Action track ─────────────────────────────────────────────────────
-        action_path = audio_dir / f"{shot_id}_action.wav"
+        action_path = audio_dir / f"{shot_id}_action.mp3"
         if action_path.exists() and action_path.stat().st_size > 0:
             done += 1
             await job.emit_progress(shot_id=shot_id, track="action", done=done, skipped=True)
             if shot_id not in durations:
-                from mutagen.wave import WAVE
-                durations.setdefault(shot_id, {})["action"] = float(WAVE(str(action_path)).info.length)
+                from mutagen.mp3 import MP3
+                durations.setdefault(shot_id, {})["action"] = float(MP3(str(action_path)).info.length)
         else:
             action_text = shot.get("action", "").strip()
             if action_text:
@@ -67,29 +67,29 @@ async def run_tts_job(job: JobRecord, project_id: str, provider: TTSProvider):
 
         # ── Dialogue track ────────────────────────────────────────────────────
         if shot.get("dialogue"):
-            dialogue_path = audio_dir / f"{shot_id}_dialogue.wav"
+            dialogue_path = audio_dir / f"{shot_id}_dialogue.mp3"
             if dialogue_path.exists() and dialogue_path.stat().st_size > 0:
                 done += 1
                 await job.emit_progress(shot_id=shot_id, track="dialogue", done=done, skipped=True)
                 if "dialogue" not in durations.get(shot_id, {}):
-                    from mutagen.wave import WAVE
-                    durations.setdefault(shot_id, {})["dialogue"] = float(WAVE(str(dialogue_path)).info.length)
+                    from mutagen.mp3 import MP3
+                    durations.setdefault(shot_id, {})["dialogue"] = float(MP3(str(dialogue_path)).info.length)
             else:
                 dialogue_text = shot["dialogue"].strip()
                 if dialogue_text:
                     dur = await provider.synthesize(dialogue_text, dialogue_voice, str(dialogue_path))
                     durations.setdefault(shot_id, {})["dialogue"] = dur
                 done += 1
-                await job.emit_progress(
-                    shot_id=shot_id, track="dialogue", done=done,
-                    filename=dialogue_path.name,
-                )
+            await job.emit_progress(
+                shot_id=shot_id, track="dialogue", done=done,
+                filename=dialogue_path.name,
+            )
 
         # Persist durations after each shot (incremental write)
         _write_durations(durations_path, durations)
 
     job.done = done
-    audio_files = [f.name for f in audio_dir.iterdir() if f.suffix == ".wav"]
+    audio_files = [f.name for f in audio_dir.iterdir() if f.suffix == ".mp3"]
     await job.emit_complete({"audio_files": sorted(audio_files), "total_tracks": done})
 
 

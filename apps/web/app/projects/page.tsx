@@ -5,6 +5,7 @@ import { useProjects } from "@/hooks/useProjectState";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DeleteProjectDialog } from "@/components/delete-project-dialog";
 
 const STATUS_COLORS: Record<string, string> = {
   pending:     "bg-zinc-100 text-zinc-600",
@@ -111,22 +112,46 @@ export default function ProjectsPage() {
             {projects.map((p: any) => {
               const status = projectOverallStatus(p.steps);
               return (
-                <Link key={p.id} href={`/projects/${p.id}`}>
-                  <Card className="cursor-pointer hover:shadow-md transition-shadow">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base">{p.title}</CardTitle>
-                      <p className="text-sm text-zinc-500">{p.episode}</p>
-                    </CardHeader>
-                    <CardContent>
-                      <Badge className={STATUS_COLORS[status]}>
-                        {projectLabel(p.steps)}
-                      </Badge>
-                      <p className="text-xs text-zinc-400 mt-2">
-                        {new Date(p.created_at).toLocaleDateString("zh-CN")}
-                      </p>
-                    </CardContent>
-                  </Card>
-                </Link>
+                <div key={p.id} className="relative group">
+                  <Link href={`/projects/${p.id}`}>
+                    <Card className="cursor-pointer hover:shadow-md transition-shadow">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-base">{p.title}</CardTitle>
+                        <p className="text-sm text-zinc-500">{p.episode}</p>
+                      </CardHeader>
+                      <CardContent>
+                        <Badge className={STATUS_COLORS[status]}>
+                          {projectLabel(p.steps)}
+                        </Badge>
+                        <p className="text-xs text-zinc-400 mt-2">
+                          {new Date(p.created_at).toLocaleDateString("zh-CN")}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                  {/* Delete button — visible on hover */}
+                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <DeleteProjectDialog
+                      projectId={p.id}
+                      projectTitle={`${p.title} — ${p.episode}`}
+                      onDeleted={() => mutate()}
+                      trigger={
+                        <button
+                          className="p-1.5 rounded bg-white shadow border text-zinc-400 hover:text-red-500 hover:border-red-200 transition-colors"
+                          title="删除项目"
+                          onClick={(e) => e.preventDefault()}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                            <path d="M10 11v6M14 11v6" />
+                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                          </svg>
+                        </button>
+                      }
+                    />
+                  </div>
+                </div>
               );
             })}
           </div>

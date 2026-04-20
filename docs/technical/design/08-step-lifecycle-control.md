@@ -466,7 +466,7 @@ es.addEventListener("stopped", () => {
 |------|------------|---------|
 | storyboard | `storyboard.json` 是否存在 | 已存在则直接读取（但 storyboard 通常很快，不常暂停） |
 | image | `images/{shot_id}.png` 是否存在且非空 | 存在则跳过该 shot |
-| tts | `audio/{shot_id}_action.wav` / `{shot_id}.wav` 是否存在 | 存在则跳过该 track |
+| tts | `audio/{shot_id}_action.mp3` / `{shot_id}_dialogue.mp3` 是否存在 | 存在则跳过该 track |
 | video | `clips/{shot_id}.mp4` 是否存在且非空 | 存在则跳过该 clip |
 | assembly | 无（每次都是全量重新合并）| 无断点，但每次执行都是幂等的 |
 
@@ -511,10 +511,11 @@ Job handler 遍历 shots/tracks
 
 **问题**：服务进程重启后，内存中的 Job 对象丢失。
 
-**方案**：
+**方案**（已实现）：
 - **不实现跨进程恢复**（v1.0 范围）
 - 服务重启后，Job 丢失，`state.json` 中的 `job_id` 指向不存在的 job
-- 前端显示 "服务已重启，请重新开始"
+- 前端 pause/resume 路由收到 404 时，自动将步骤状态改为 `stopped`，返回友好提示"任务已失效，请点击重新开始"
+- stop 路由收到 404 时，直接视为停止成功（不报错）
 - 用户点击"重新开始"，利用断点续传机制自动跳过已生成文件
 
 ### 7.3 多个步骤同时暂停
@@ -565,17 +566,17 @@ Job handler 遍历 shots/tracks
 | 10 | `services/assembly/main.py` | 修改 | 新增 /jobs/{id}/pause、/resume、/stop 路由 |
 | 11 | `services/assembly/job_handler.py` | 修改 | 增加 await job.check_pause() |
 
-### 8.2 前端（Next.js）
+### 8.2 前端（Next.js）— ✅ 全部已实现
 
 | # | 文件 | 变更 | 说明 |
 |---|------|------|------|
-| 1 | `apps/web/lib/project-store.ts` | 修改 | 扩展 StepStatus 类型 |
-| 2 | `apps/web/hooks/useStepControl.ts` | 新增 | pause/resume/stop 操作的 hook |
-| 3 | `apps/web/hooks/useStepProgress.ts` | 修改 | 处理 paused/resumed/stopped SSE 事件 |
-| 4 | `apps/web/app/api/pipeline/[id]/[step]/pause/route.ts` | 新增 | 暂停 API |
-| 5 | `apps/web/app/api/pipeline/[id]/[step]/resume/route.ts` | 新增 | 恢复 API |
-| 6 | `apps/web/app/api/pipeline/[id]/[step]/stop/route.ts` | 新增 | 停止 API |
-| 7 | `apps/web/app/projects/[id]/page.tsx` | 修改 | 新增操作按钮、状态显示 |
+| 1 | `apps/web/lib/project-store.ts` | ✅ | 扩展 StepStatus 类型 |
+| 2 | `apps/web/hooks/useStepControl.ts` | ✅ | pause/resume/stop 操作的 hook（含 404 自动降级为 stopped） |
+| 3 | `apps/web/hooks/useStepProgress.ts` | ✅ | 处理 paused/resumed/stopped SSE 事件；active 变 true 时重置 isComplete |
+| 4 | `apps/web/app/api/pipeline/[id]/[step]/pause/route.ts` | ✅ | 暂停 API（404 → 自动置 stopped） |
+| 5 | `apps/web/app/api/pipeline/[id]/[step]/resume/route.ts` | ✅ | 恢复 API（404 → 自动置 stopped） |
+| 6 | `apps/web/app/api/pipeline/[id]/[step]/stop/route.ts` | ✅ | 停止 API（404 视为成功） |
+| 7 | `apps/web/app/projects/[id]/page.tsx` | ✅ | 新增操作按钮、状态显示 |
 
 ### 8.3 文档
 

@@ -88,40 +88,57 @@
   "title":       "斗破苍穹",
   "episode":     "E01",
   "created_at":  "2026-04-18T12:00:00Z",
-  "updated_at":  "2026-04-18T13:30:00Z",
-  "pipeline": {
+  "steps": {
     "storyboard": {
-      "status":       "completed",
-      "completed_at": "2026-04-18T12:02:00Z",
-      "shot_count":   10
+      "status":     "completed",
+      "job_id":     "job_abc123",
+      "updated_at": "2026-04-18T12:02:00Z",
+      "result": {
+        "type": "storyboard",
+        "data": { "shot_count": 10, "storyboard_path": "storyboard.json" }
+      }
     },
     "image": {
-      "status":           "in_progress",
-      "started_at":       "2026-04-18T12:02:30Z",
-      "completed_shots":  ["E01_001", "E01_002", "E01_003"],
-      "failed_shots":     [],
-      "total_shots":      10
+      "status":     "in_progress",
+      "job_id":     "job_def456",
+      "updated_at": "2026-04-18T12:02:30Z",
+      "result":     null
     },
     "tts": {
-      "status":           "in_progress",
-      "started_at":       "2026-04-18T12:02:30Z",
-      "completed_shots":  ["E01_001", "E01_002"],
-      "failed_shots":     [],
-      "total_shots":      10
+      "status":     "pending",
+      "job_id":     null,
+      "updated_at": "2026-04-18T12:00:00Z",
+      "result":     null
     },
     "video": {
-      "status": "pending"
+      "status":     "pending",
+      "job_id":     null,
+      "updated_at": "2026-04-18T12:00:00Z",
+      "result":     null
     },
     "assembly": {
-      "status": "pending"
+      "status":     "pending",
+      "job_id":     null,
+      "updated_at": "2026-04-18T12:00:00Z",
+      "result":     null
     }
   }
 }
 ```
 
-**`status` 枚举值：** `pending` / `in_progress` / `completed` / `failed`
+**`status` 枚举值：** `pending` / `in_progress` / `paused` / `stopped` / `completed` / `failed`
 
-> image 和 tts 可同时处于 `in_progress`（并行执行），其余步骤严格串行。
+**`result` 字段（各步骤类型）：**
+
+| 步骤 | result 结构 |
+|------|------------|
+| storyboard | `{ type: "storyboard", data: { shot_count, storyboard_path } }` |
+| image | `{ type: "image", data: { images: [{shot_id, filename}], total } }` |
+| tts | `{ type: "tts", data: { audio_files: string[], total_tracks } }` |
+| video | `{ type: "video", data: { clips: [{shot_id, filename, duration}], total } }` |
+| assembly | `{ type: "assembly", data: { video_path, srt_path, duration } }` |
+
+> 顶层字段从 `pipeline` 改为 `steps`（实际实现），各步骤状态统一使用 `{ status, job_id, updated_at, result }` 结构。
 
 ---
 
@@ -177,10 +194,22 @@ GET /jobs/{job_id}/status
 }
 ```
 
-**取消任务**
+**暂停任务**
 ```
-DELETE /jobs/{job_id}
-响应（200 OK）：{ "cancelled": true }
+POST /jobs/{job_id}/pause
+响应（200 OK）：{ "job_id": "...", "status": "paused" }
+```
+
+**恢复任务**
+```
+POST /jobs/{job_id}/resume
+响应（200 OK）：{ "job_id": "...", "status": "in_progress" }
+```
+
+**停止任务**
+```
+POST /jobs/{job_id}/stop
+响应（200 OK）：{ "job_id": "...", "status": "stopped" }
 ```
 
 ### 2.2 模型管理（GPU 服务专用）
@@ -212,8 +241,8 @@ projects/
     │   ├── E01_001.png         ← 每镜头图片（image-service 写）
     │   └── ...
     ├── audio/
-    │   ├── E01_001_action.wav  ← 旁白音频（tts-service 写）
-    │   ├── E01_001_dialogue.wav ← 对话音频（tts-service 写，无对话则无此文件）
+    │   ├── E01_001_action.mp3  ← 旁白音频（tts-service 写，edge-tts 输出 mp3）
+    │   ├── E01_001_dialogue.mp3 ← 对话音频（tts-service 写，无对话则无此文件）
     │   └── ...
     ├── clips/
     │   ├── E01_001.mp4         ← 视频片段（video-service 写）

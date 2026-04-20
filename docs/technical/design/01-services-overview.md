@@ -29,7 +29,9 @@ services/{name}/
 POST   /jobs                    提交异步任务，立即返回 job_id
 GET    /jobs/{job_id}/events    SSE 流，实时推送进度
 GET    /jobs/{job_id}/status    查询当前状态
-DELETE /jobs/{job_id}           取消任务
+POST   /jobs/{job_id}/pause     暂停任务（挂起，保留上下文）
+POST   /jobs/{job_id}/resume    恢复暂停的任务
+POST   /jobs/{job_id}/stop      停止任务（保留已产出文件）
 GET    /health                  健康检查
 
 # GPU 服务额外提供：
@@ -45,6 +47,15 @@ data: {"shot_id":"E01_001","done":1,"total":10,"message":"Generating image..."}
 
 event: progress
 data: {"shot_id":"E01_002","done":2,"total":10,"message":"Generating image..."}
+
+event: paused
+data: {"message":"Job paused by user"}
+
+event: resumed
+data: {"message":"Job resumed"}
+
+event: stopped
+data: {"message":"Job stopped by user","done":2,"total":10}
 
 event: complete
 data: {"result":{"images":[{"shot_id":"E01_001","filename":"E01_001.png"}]}}
@@ -70,7 +81,9 @@ data: {"shot_id":"E01_003","message":"CUDA out of memory","retryable":true}
 ```
 queued → in_progress → completed
                     ↘ failed
-queued → cancelled
+                    ↘ paused → in_progress (resume)
+                             ↘ stopped (stop)
+                    ↘ stopped (stop)
 ```
 
 ### 2.2 内存结构

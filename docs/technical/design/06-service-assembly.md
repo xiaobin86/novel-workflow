@@ -16,6 +16,9 @@ main.py (FastAPI)
 ├── POST /jobs               → job_manager.submit(AssembleJob)
 ├── GET  /jobs/{id}/events   → job_manager.stream(job_id)
 ├── GET  /jobs/{id}/status   → job_manager.status(job_id)
+├── POST /jobs/{id}/pause    → job_manager.pause(job_id)
+├── POST /jobs/{id}/resume   → job_manager.resume(job_id)
+├── POST /jobs/{id}/stop     → job_manager.stop(job_id)
 └── GET  /health
 
 job_manager.py

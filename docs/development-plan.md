@@ -4,7 +4,7 @@
 > **创建时间**：2026-04-18  
 > **目标**：完成从设计文档到可运行代码的完整实现  
 > **预计总工时**：约 60-70 小时  
-> **最后更新**：{last_updated}
+> **最后更新**：2026-04-20
 
 ---
 
@@ -33,16 +33,24 @@
 | tts-service | `docs/technical/design/04-service-tts.md` | 完整 |
 | video-service | `docs/technical/design/05-service-video.md` | 完整 |
 | assembly-service | `docs/technical/design/06-service-assembly.md` | 完整 |
-| WebUI 设计 | `docs/technical/design/07-webui-design.md` | 完整（750行）|
+| WebUI 设计 | `docs/technical/design/07-webui-design.md` | 完整 |
+| 步骤生命周期控制 | `docs/technical/design/08-step-lifecycle-control.md` | 完整 |
+| 步骤产物预览 | `docs/technical/design/09-step-preview.md` | 完整 |
 | 技术架构 | `docs/technical/architecture/001-tech-stack.md` | 完整 |
 | 调研报告 | `docs/research/ui-design/` & `docs/research/ai-services/` | 完整 |
+| PRD — 删除项目 | `docs/product/prd/delete-project.md` | 完整 |
+| PRD — 重新生成 | `docs/product/prd/regenerate-artifact.md` | 完整 |
 
-### ❌ 待实现（代码层面）
+### ✅ 已完成（代码层面，截至 2026-04-20）
 
-- `services/` 目录 — 5个 FastAPI 服务代码
-- `apps/web/` 目录 — Next.js 前端代码
-- `infra/docker-compose.yml` — Docker 编排（当前只有 PostgreSQL 模板）
-- `.env.example` — 环境变量模板
+- `services/` 目录 — 5个 FastAPI 服务，均在 Docker 中运行（storyboard/image/tts/video/assembly）
+- `apps/web/` 目录 — Next.js 15 前端，运行于 `http://localhost:3000`
+- `docker-compose.yml` — 5个后端服务容器编排
+- `.env` — 环境变量（KIMI_API_KEY、模型路径等）
+- 步骤暂停/恢复/停止功能（feature/fix 已合并到 develop）
+- 删除项目功能（feature/delete-project 已合并到 develop）
+- 重新生成功能（feature/regenerate-artifact 已合并到 develop）
+- 磁盘恢复（state.json 缺失时自动从磁盘重建）
 
 ---
 
@@ -85,10 +93,10 @@
 **MVP参考**：`D:/work/novel-comic-drama-2/storyboard_generator.py`
 
 **QA 验证**：
-- [ ] POST /jobs 返回 job_id，状态为 queued
-- [ ] SSE 推送 progress/complete 事件
-- [ ] 生成的 storyboard.json 符合数据模型规范
-- [ ] 错误时推送 error 事件（retryable=true）
+- [x] POST /jobs 返回 job_id，状态为 queued
+- [x] SSE 推送 progress/complete 事件
+- [x] 生成的 storyboard.json 符合数据模型规范
+- [ ] 错误时推送 error 事件（retryable=true）（未单独验证）
 
 ---
 
@@ -104,10 +112,10 @@
 **MVP参考**：`D:/work/novel-comic-drama-2/generate_audio.py`
 
 **QA 验证**：
-- [ ] 生成 WAV 文件（旁白 + 对话）
-- [ ] 生成 `audio_durations.json` 供 video-service 使用
-- [ ] 断点续传：已存在的文件自动跳过
-- [ ] SSE 推送每个轨道的进度
+- [x] 生成 MP3 文件（旁白 + 对话，edge-tts 实际输出 .mp3）
+- [x] 断点续传：已存在的文件自动跳过
+- [x] SSE 推送每个轨道的进度
+- [ ] audio_durations.json（实现中改为从文件时长推断，无独立 JSON）
 
 ---
 
@@ -124,11 +132,11 @@
 **MVP参考**：`D:/work/novel-comic-drama-2/batch_generate_flux.py`
 
 **QA 验证**：
-- [ ] 模型首次加载成功（约2分钟）
-- [ ] 生成 768×768 PNG 图片
-- [ ] 断点续传：已存在的文件自动跳过
-- [ ] `/model/unload` 释放 GPU 显存
-- [ ] 10 shots 总时间约 15-20 分钟
+- [x] 模型首次加载成功（GPU 问题已修复，用户确认）
+- [x] 生成图片（PNG/JPG/WebP，按模型输出格式）
+- [x] 断点续传：已存在的文件自动跳过
+- [x] `/model/unload` 释放 GPU 显存
+- [ ] 10 shots 完整时间未计时（功能正常）
 
 ---
 
@@ -197,9 +205,9 @@
 **设计参考**：`docs/technical/design/07-webui-design.md` 第1节（目录结构）、第10节（技术栈）
 
 **QA 验证**：
-- [ ] `npm run dev` 启动成功，端口3000
-- [ ] shadcn 组件可正常使用
-- [ ] 全局样式（主题色、字体）一致
+- [x] `npm run dev` 启动成功，端口3000
+- [x] shadcn 组件可正常使用
+- [x] 全局样式（主题色、字体）一致
 
 ---
 
@@ -215,10 +223,10 @@
 **设计参考**：`docs/technical/design/07-webui-design.md` 第3节（API Routes 设计）
 
 **QA 验证**：
-- [ ] 创建项目后生成 `projects/{id}/state.json`
-- [ ] POST pipeline/start 返回 job_id，更新 state
-- [ ] SSE 代理实时推送进度到浏览器
-- [ ] 文件 API 可访问图片/音频/视频
+- [x] 创建项目后生成 `projects/{id}/state.json`
+- [x] POST pipeline/start 返回 job_id，更新 state
+- [x] SSE 代理实时推送进度到浏览器
+- [x] 文件 API 可访问图片/音频/视频
 
 ---
 
@@ -238,11 +246,11 @@
 **设计参考**：`docs/technical/design/07-webui-design.md` 第2节（页面设计）、第4节（组件设计）
 
 **QA 验证**：
-- [ ] 项目列表页显示所有项目及进度
-- [ ] Pipeline Wizard 正确显示5个步骤状态
-- [ ] 每个步骤显示对应的内容/进度/预览
-- [ ] 自动模式开关工作正常
-- [ ] 步骤间导航正确（前序未完成时不可进入）
+- [x] 项目列表页显示所有项目及进度
+- [x] Pipeline Wizard 正确显示5个步骤状态
+- [x] 每个步骤显示对应的内容/进度/预览
+- [x] 自动模式开关工作正常
+- [x] 步骤间导航正确（前序未完成时不可进入）
 
 ---
 
@@ -376,10 +384,12 @@ docs: update HANDOFF with progress
 test: add mock fixtures for tts-service
 ```
 
-### 当前状态
+### 当前状态（截至 2026-04-20）
 
-- `master` 分支：已完成所有设计文档（当前状态）
-- **下一步**：从 `master` 创建 `develop` 分支，所有编码工作从 `develop` 切出 feature 分支
+- `master` 分支：存放稳定文档
+- `develop` 分支：包含所有已完成功能（Phase 1-3 全部完成，含 Phase 4 Docker 编排）
+- 已合并的 feature 分支：feature/delete-project、feature/regenerate-artifact、fix/pause-restart、fix/control-job-not-found
+- **当前工作分支**：`feature/regenerate-artifact`（最后一个功能分支，已合并至 develop）
 
 ---
 
@@ -524,7 +534,7 @@ D:\work\novel-comic-drama\models\
 - 视频时长：`max(声明时长, TTS时长 + 0.5s)`
 - FFmpeg：必须使用 concat demuxer，不能用 xfade
 - 输出格式：必须加 `-pix_fmt yuv420p`
-- edge-tts：输出是 MP3 格式（扩展名.wav但内容是mp3），FFmpeg 可直接处理
+- edge-tts：输出是 MP3 格式，实际文件扩展名为 `.mp3`，FFmpeg 可直接处理
 
 ### D. 环境信息
 

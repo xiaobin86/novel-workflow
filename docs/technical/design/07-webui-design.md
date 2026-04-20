@@ -24,8 +24,11 @@ apps/web/
 │       │   ├── route.ts              # GET /api/projects, POST /api/projects
 │       │   └── [id]/
 │       │       ├── route.ts          # GET, PATCH, DELETE /api/projects/[id]
-│       │       └── state/
-│       │           └── route.ts      # GET /api/projects/[id]/state
+│       │       ├── state/
+│       │       │   └── route.ts      # GET /api/projects/[id]/state
+│       │       └── files/
+│       │           └── [...path]/
+│       │               └── route.ts  # GET /api/projects/[id]/files/[...path]
 │       └── pipeline/
 │           └── [id]/
 │               ├── [step]/
@@ -37,6 +40,10 @@ apps/web/
 │               │   │   └── route.ts  # POST /api/pipeline/[id]/[step]/resume
 │               │   ├── stop/         # 【新增】
 │               │   │   └── route.ts  # POST /api/pipeline/[id]/[step]/stop
+│               │   ├── reset/        # 【新增】阶段级重新生成（清空产物+重置状态）
+│               │   │   └── route.ts  # POST /api/pipeline/[id]/[step]/reset
+│               │   ├── regenerate-item/ # 【新增】产物级重新生成（单个 shot）
+│               │   │   └── route.ts  # POST /api/pipeline/[id]/[step]/regenerate-item
 │               │   └── events/
 │               │       └── route.ts  # GET /api/pipeline/[id]/[step]/events (SSE 代理)
 │               └── unload-model/
@@ -61,6 +68,9 @@ apps/web/
 │   │   ├── AudioList.tsx             # 音频播放列表
 │   │   ├── VideoGrid.tsx             # 视频片段网格
 │   │   └── FinalVideoPlayer.tsx      # 最终视频播放器
+│   ├── step-artifacts.tsx            # 产物预览（StoryboardArtifacts/ImageArtifacts/TTSArtifacts/VideoArtifacts/AssemblyArtifacts）
+│   ├── delete-project-dialog.tsx     # 删除项目确认弹窗
+│   ├── confirm-dialog.tsx            # 通用确认弹窗（供重新生成等操作复用）
 │   └── ui/                           # 基础 UI 组件（shadcn/ui）
 ├── hooks/
 │   ├── useStepProgress.ts            # SSE 进度流
@@ -524,7 +534,7 @@ function useStepProgress(projectId: string, step: StepName, active: boolean): St
 ```
 
 **AudioList 组件**：
-- 音频路径：`/projects/{project_id}/audio/{shot_id}_{track}.wav`
+- 音频路径：`/api/projects/{project_id}/files/audio/{shot_id}_{track}.mp3`
 - 使用 HTML5 `<audio>` 元素，带播放控制
 - 已跳过的条目标注"已存在"徽标
 
@@ -608,7 +618,7 @@ function useStepProgress(projectId: string, step: StepName, active: boolean): St
 |------|-----------|---------|
 | 分镜 | `storyboard.json` | 符合 Shot schema |
 | 图片 | `{shot_id}.png` × N | 文件名匹配 shot_id |
-| TTS | `{shot_id}_action.wav` + `audio_durations.json` | WAV + JSON |
+| TTS | `{shot_id}_action.mp3` + `{shot_id}_dialogue.mp3` (可选) | MP3 文件（edge-tts 输出）|
 | 视频 | `{shot_id}.mp4` × N | 文件名匹配 shot_id |
 
 ### 5.3 处理流程
@@ -692,7 +702,7 @@ export async function GET(req: Request, { params }) {
 | 文件类型 | URL 路径 | 实际路径 |
 |---------|---------|---------|
 | 图片 | `/api/projects/{id}/files/images/{shot}.png` | `/app/projects/{id}/images/{shot}.png` |
-| 音频 | `/api/projects/{id}/files/audio/{shot}_action.wav` | `/app/projects/{id}/audio/...` |
+| 音频 | `/api/projects/{id}/files/audio/{shot}_action.mp3` | `/app/projects/{id}/audio/...` |
 | 视频片段 | `/api/projects/{id}/files/clips/{shot}.mp4` | `/app/projects/{id}/clips/...` |
 | 最终视频 | `/api/projects/{id}/files/output/final.mp4` | `/app/projects/{id}/output/final.mp4` |
 | 字幕 | `/api/projects/{id}/files/output/final.srt` | `/app/projects/{id}/output/final.srt` |
@@ -900,6 +910,7 @@ export function useStepControl(projectId: string, mutateState: () => Promise<voi
 |------|------|---------|------|
 | 2026-04-18 | v1.0 | 初始版本，完整 Web UI 设计 | Sisyphus |
 | 2026-04-20 | v1.1 | 【新增】步骤生命周期控制 UI（暂停/恢复/停止） | Sisyphus |
+| 2026-04-20 | v1.2 | 【新增】reset/regenerate-item 路由、step-artifacts/delete-project-dialog/confirm-dialog 组件、files API 路由、暂停/停止状态枚举 | Claude Sonnet 4.6 |
 
 ---
 

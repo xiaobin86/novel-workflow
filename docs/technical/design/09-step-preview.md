@@ -62,13 +62,13 @@ export interface StepState {
   result?: StepResult | null;  // 【新增】步骤完成产物元数据
 }
 
-// 各步骤的产物数据结构（与 emit_complete payload 对齐）
+// 各步骤的产物数据结构（带 type 标签，便于类型收窄）
 export type StepResult =
-  | StoryboardResult
-  | ImageResult
-  | TTSResult
-  | VideoResult
-  | AssemblyResult;
+  | { type: "storyboard"; data: StoryboardResult }
+  | { type: "image";      data: ImageResult }
+  | { type: "tts";        data: TTSResult }
+  | { type: "video";      data: VideoResult }
+  | { type: "assembly";   data: AssemblyResult };
 
 export interface StoryboardResult {
   shot_count: number;
@@ -223,11 +223,11 @@ export function StepArtifacts({ step, projectId, stepState, progressArtifacts }:
 
   return (
     <div className="mt-4 pt-4 border-t">
-      {step === "storyboard" && <StoryboardArtifacts projectId={projectId} result={result as StoryboardResult} />}
-      {step === "image" && <ImageArtifacts projectId={projectId} result={result as ImageResult} progressArtifacts={progressArtifacts} />}
-      {step === "tts" && <TTSArtifacts projectId={projectId} result={result as TTSResult} progressArtifacts={progressArtifacts} />}
-      {step === "video" && <VideoArtifacts projectId={projectId} result={result as VideoResult} progressArtifacts={progressArtifacts} />}
-      {step === "assembly" && <AssemblyArtifacts projectId={projectId} result={result as AssemblyResult} />}
+      {step === "storyboard" && <StoryboardArtifacts projectId={projectId} result={result?.type === "storyboard" ? result.data : undefined} />}
+      {step === "image" && <ImageArtifacts projectId={projectId} result={result?.type === "image" ? result.data : undefined} progressArtifacts={progressArtifacts} />}
+      {step === "tts" && <TTSArtifacts projectId={projectId} result={result?.type === "tts" ? result.data : undefined} progressArtifacts={progressArtifacts} />}
+      {step === "video" && <VideoArtifacts projectId={projectId} result={result?.type === "video" ? result.data : undefined} progressArtifacts={progressArtifacts} />}
+      {step === "assembly" && <AssemblyArtifacts projectId={projectId} result={result?.type === "assembly" ? result.data : undefined} />}
     </div>
   );
 }
@@ -405,7 +405,7 @@ function AssemblyArtifacts({ projectId, result }: { projectId: string; result?: 
 |------|----------|
 | storyboard.json | `/api/projects/{id}/files/storyboard.json` |
 | 分镜图片 | `/api/projects/{id}/files/images/{shot_id}.png` |
-| TTS 音频 | `/api/projects/{id}/files/audio/{shot_id}_action.wav` |
+| TTS 音频 | `/api/projects/{id}/files/audio/{shot_id}_action.mp3` |
 | 视频片段 | `/api/projects/{id}/files/clips/{shot_id}.mp4` |
 | 最终视频 | `/api/projects/{id}/files/output/final.mp4` |
 | 字幕文件 | `/api/projects/{id}/files/output/final.srt` |
@@ -451,22 +451,22 @@ StoryboardArtifacts 需要读取 `storyboard.json` 获取 shot 列表。由于 `
 
 ---
 
-## 8. 实现顺序
+## 8. 实现顺序（✅ 全部已实现）
 
-### Phase 1：数据层（必须先完成）
-1. 扩展 `StepState` / `StepResult` 类型定义
-2. 修改 `events/route.ts` 持久化 `result`
-3. 扩展 `useStepProgress` 维护 `progressArtifacts` 数组
+### Phase 1：数据层
+1. ✅ 扩展 `StepState` / `StepResult` 类型定义（`project-store.ts`）
+2. ✅ 修改 `events/route.ts` 持久化 `result`（complete 事件从磁盘重建 result）
+3. ✅ 扩展 `useStepProgress` 维护 `progressArtifacts` 数组
 
 ### Phase 2：展示层
-4. 创建 `StepArtifacts` 主组件及 5 个子组件
-5. 修改 `page.tsx` 的 `StepContent`，在下方插入 `<StepArtifacts />`
-6. 为各步骤配置实时 artifact 生成逻辑（解析 progress 事件）
+4. ✅ 创建 `StepArtifacts` 主组件及 5 个子组件（`step-artifacts.tsx`）
+5. ✅ 修改 `page.tsx` 的 `StepContent`，在下方插入 `<StepArtifacts />`
+6. ✅ 为各步骤配置实时 artifact 生成逻辑（解析 progress 事件）
 
 ### Phase 3：验证
-7. TypeScript 类型检查
-8. ESLint 检查
-9. 端到端测试：执行 pipeline，验证每步预览正确显示
+7. ✅ TypeScript 类型检查
+8. ✅ ESLint 检查
+9. 端到端测试：执行 pipeline 验证每步预览（用户待确认）
 
 ---
 

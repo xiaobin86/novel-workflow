@@ -498,7 +498,7 @@ export default function ProjectPage() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-8 py-8">
+      <main className="max-w-[100rem] mx-auto px-8 py-8">
         <div className="flex gap-6">
           {/* Left sidebar navigation */}
           <aside className="hidden lg:block w-60 shrink-0">

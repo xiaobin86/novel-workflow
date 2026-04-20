@@ -170,8 +170,8 @@ async def mix_audio(
 
     for i, (shot, dur) in enumerate(zip(shots, shot_durations)):
         shot_id = shot["shot_id"]
-        action_path = f"{audio_dir}/{shot_id}_action.wav"
-        dialogue_path = f"{audio_dir}/{shot_id}_dialogue.wav"
+        action_path = f"{audio_dir}/{shot_id}_action.mp3"
+        dialogue_path = f"{audio_dir}/{shot_id}_dialogue.mp3"
 
         if os.path.exists(action_path):
             inputs += ["-i", action_path]
@@ -264,11 +264,11 @@ def validate_assets(project_dir: Path, shots: list[dict]) -> list[str]:
     for shot in shots:
         sid = shot["shot_id"]
         clip = project_dir / "clips" / f"{sid}.mp4"
-        action = project_dir / "audio" / f"{sid}_action.wav"
+        action = project_dir / "audio" / f"{sid}_action.mp3"
         if not (clip.exists() and clip.stat().st_size > 0):
             missing.append(f"clips/{sid}.mp4")
         if not (action.exists() and action.stat().st_size > 0):
-            missing.append(f"audio/{sid}_action.wav")
+            missing.append(f"audio/{sid}_action.mp3")
     return missing
 ```
 
@@ -281,8 +281,8 @@ def validate_assets(project_dir: Path, shots: list[dict]) -> list[str]:
 | 读取分镜 | `/app/projects/{project_id}/storyboard.json` |
 | 读取音频时长 | `/app/projects/{project_id}/audio_durations.json` |
 | 读取视频片段 | `/app/projects/{project_id}/clips/{shot_id}.mp4` |
-| 读取音频 | `/app/projects/{project_id}/audio/{shot_id}_action.wav` |
-| 读取台词音频 | `/app/projects/{project_id}/audio/{shot_id}_dialogue.wav`（可选）|
+| 读取音频 | `/app/projects/{project_id}/audio/{shot_id}_action.mp3` |
+| 读取台词音频 | `/app/projects/{project_id}/audio/{shot_id}_dialogue.mp3`（可选）|
 | 写入最终视频 | `/app/projects/{project_id}/output/final.mp4` |
 | 写入字幕 | `/app/projects/{project_id}/output/final.srt` |
 

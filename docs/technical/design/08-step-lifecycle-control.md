@@ -1,8 +1,10 @@
 # 08 — 步骤级生命周期控制设计
 
-> **文档编号**：08  
-> **关联文档**：07-webui-design.md（Web UI 设计）、01-services-overview.md（服务层设计）  
-> **目标**：为 Pipeline 每个步骤增加暂停(pause)、启动/继续(start/resume)、停止(stop)能力  
+> **文档编号**：08
+> **关联文档**：07-webui-design.md（Web UI 设计）、01-services-overview.md（服务层设计）
+> **目标**：为 Pipeline 每个步骤增加暂停(pause)、启动/继续(start/resume)、停止(stop)能力
+>
+> ⚠️ **重要说明**：本文档描述了完整的 pause/resume/stop 设计，但 **当前代码仅实现了 stop**，pause 和 resume **未实现**（后端无对应 API 路由，前端无对应操作按钮）。请以代码实际状态为准。
 
 ---
 
@@ -566,17 +568,17 @@ Job handler 遍历 shots/tracks
 | 10 | `services/assembly/main.py` | 修改 | 新增 /jobs/{id}/pause、/resume、/stop 路由 |
 | 11 | `services/assembly/job_handler.py` | 修改 | 增加 await job.check_pause() |
 
-### 8.2 前端（Next.js）— ✅ 全部已实现
+### 8.2 前端（Next.js）— 部分实现
 
 | # | 文件 | 变更 | 说明 |
-|---|------|------|------|
+|---|---|------|------|
 | 1 | `apps/web/lib/project-store.ts` | ✅ | 扩展 StepStatus 类型 |
-| 2 | `apps/web/hooks/useStepControl.ts` | ✅ | pause/resume/stop 操作的 hook（含 404 自动降级为 stopped） |
-| 3 | `apps/web/hooks/useStepProgress.ts` | ✅ | 处理 paused/resumed/stopped SSE 事件；active 变 true 时重置 isComplete |
-| 4 | `apps/web/app/api/pipeline/[id]/[step]/pause/route.ts` | ✅ | 暂停 API（404 → 自动置 stopped） |
-| 5 | `apps/web/app/api/pipeline/[id]/[step]/resume/route.ts` | ✅ | 恢复 API（404 → 自动置 stopped） |
+| 2 | `apps/web/hooks/useStepControl.ts` | ⚠️ | **仅 stop**，pause/resume **未实现** |
+| 3 | `apps/web/hooks/useStepProgress.ts` | ✅ | 处理 stopped SSE 事件；active 变 true 时重置 isComplete |
+| 4 | `apps/web/app/api/pipeline/[id]/[step]/pause/route.ts` | ❌ | **不存在** |
+| 5 | `apps/web/app/api/pipeline/[id]/[step]/resume/route.ts` | ❌ | **不存在** |
 | 6 | `apps/web/app/api/pipeline/[id]/[step]/stop/route.ts` | ✅ | 停止 API（404 视为成功） |
-| 7 | `apps/web/app/projects/[id]/page.tsx` | ✅ | 新增操作按钮、状态显示 |
+| 7 | `apps/web/app/projects/[id]/page.tsx` | ✅ | 新增 stop 操作按钮、状态显示 |
 
 ### 8.3 文档
 

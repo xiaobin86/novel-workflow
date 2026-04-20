@@ -311,7 +311,7 @@ function TTSArtifacts({ projectId, result, progressArtifacts }: TTSArtifactsProp
       <div className="space-y-2 max-h-64 overflow-y-auto">
         {audioFiles.map((filename) => {
           const track = filename.includes("_dialogue") ? "台词" : "旁白";
-          const shotId = filename.replace(/_(action|dialogue)\.wav$/, "");
+          const shotId = filename.replace(/_(action|dialogue)\.mp3$/, "");
           return (
             <div key={filename} className="bg-gray-50 rounded p-2">
               <div className="text-xs text-gray-600 mb-1">{shotId} · {track}</div>

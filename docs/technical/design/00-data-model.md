@@ -101,44 +101,42 @@
     "image": {
       "status":     "in_progress",
       "job_id":     "job_def456",
-      "updated_at": "2026-04-18T12:02:30Z",
-      "result":     null
+      "updated_at": "2026-04-18T12:02:30Z"
+      // 注意：result 字段已从 state.json 中移除，产物直接从磁盘读取
     },
     "tts": {
       "status":     "pending",
       "job_id":     null,
-      "updated_at": "2026-04-18T12:00:00Z",
-      "result":     null
+      "updated_at": "2026-04-18T12:00:00Z"
     },
     "video": {
       "status":     "pending",
       "job_id":     null,
-      "updated_at": "2026-04-18T12:00:00Z",
-      "result":     null
+      "updated_at": "2026-04-18T12:00:00Z"
     },
     "assembly": {
       "status":     "pending",
       "job_id":     null,
-      "updated_at": "2026-04-18T12:00:00Z",
-      "result":     null
+      "updated_at": "2026-04-18T12:00:00Z"
     }
   }
 }
 ```
 
-**`status` 枚举值：** `pending` / `in_progress` / `paused` / `stopped` / `completed` / `failed`
+**`status` 枚举值：** `pending` / `in_progress` / `stopped` / `completed` / `failed`
 
-**`result` 字段（各步骤类型）：**
+> ⚠️ **架构变更**：`result` 字段已从 `state.json` 中移除，产物信息改为**直接从磁盘读取**（通过 `recoverStepResult()` 函数扫描文件系统）。这样设计的目的是确保 `state.json` 与文件系统不一致时，始终以文件系统为准。
+>
+> 旧版 `result` 字段结构（仅作参考，已不再使用）：
+> | 步骤 | 原 result 结构 |
+> |------|-------------|
+> | storyboard | `{ type: "storyboard", data: { shot_count, storyboard_path } }` |
+> | image | `{ type: "image", data: { images: [{shot_id, filename}], total } }` |
+> | tts | `{ type: "tts", data: { audio_files: string[], total_tracks } }` |
+> | video | `{ type: "video", data: { clips: [{shot_id, filename, duration}], total } }` |
+> | assembly | `{ type: "assembly", data: { video_path, srt_path, duration } }` |
 
-| 步骤 | result 结构 |
-|------|------------|
-| storyboard | `{ type: "storyboard", data: { shot_count, storyboard_path } }` |
-| image | `{ type: "image", data: { images: [{shot_id, filename}], total } }` |
-| tts | `{ type: "tts", data: { audio_files: string[], total_tracks } }` |
-| video | `{ type: "video", data: { clips: [{shot_id, filename, duration}], total } }` |
-| assembly | `{ type: "assembly", data: { video_path, srt_path, duration } }` |
-
-> 顶层字段从 `pipeline` 改为 `steps`（实际实现），各步骤状态统一使用 `{ status, job_id, updated_at, result }` 结构。
+> 各步骤状态统一使用 `{ status, job_id, updated_at }` 结构（无 `result` 字段）。
 
 ---
 
@@ -194,18 +192,6 @@ GET /jobs/{job_id}/status
 }
 ```
 
-**暂停任务**
-```
-POST /jobs/{job_id}/pause
-响应（200 OK）：{ "job_id": "...", "status": "paused" }
-```
-
-**恢复任务**
-```
-POST /jobs/{job_id}/resume
-响应（200 OK）：{ "job_id": "...", "status": "in_progress" }
-```
-
 **停止任务**
 ```
 POST /jobs/{job_id}/stop
@@ -241,7 +227,7 @@ projects/
     │   ├── E01_001.png         ← 每镜头图片（image-service 写）
     │   └── ...
     ├── audio/
-    │   ├── E01_001_action.mp3  ← 旁白音频（tts-service 写，edge-tts 输出 mp3）
+    │   ├── E01_001_action.mp3  ← 旁白音频（tts-service 写，edge-tts 原生输出 mp3）
     │   ├── E01_001_dialogue.mp3 ← 对话音频（tts-service 写，无对话则无此文件）
     │   └── ...
     ├── clips/

@@ -56,16 +56,16 @@ providers/
 
 ```
 event: progress
-data: {"shot_id":"E01_001","track":"action","done":1,"total":18,"filename":"E01_001_action.wav"}
+data: {"shot_id":"E01_001","track":"action","done":1,"total":18,"filename":"E01_001_action.mp3"}
 
 event: progress
-data: {"shot_id":"E01_001","track":"dialogue","done":2,"total":18,"filename":"E01_001_dialogue.wav"}
+data: {"shot_id":"E01_001","track":"dialogue","done":2,"total":18,"filename":"E01_001_dialogue.mp3"}
 
 event: progress
-data: {"shot_id":"E01_002","track":"action","done":3,"total":18,"filename":"E01_002_action.wav","skipped":true}
+data: {"shot_id":"E01_002","track":"action","done":3,"total":18,"filename":"E01_002_action.mp3","skipped":true}
 
 event: complete
-data: {"result":{"audio_files":["E01_001_action.wav","E01_001_dialogue.wav",...],"total_tracks":18}}
+data: {"result":{"audio_files":["E01_001_action.mp3","E01_001_dialogue.mp3",...],"total_tracks":18}}
 ```
 
 > `total` 为实际音频文件数（action 轨数 + dialogue 轨数），不等于 shot 数量。
@@ -88,7 +88,7 @@ class TTSProvider(ABC):
         output_path: str,
     ) -> float:
         """
-        将文本合成为 WAV 文件，返回实际音频时长（秒）。
+        将文本合成为 MP3 文件，返回实际音频时长（秒）。
         output_path 指定保存路径。
         """
         ...
@@ -111,7 +111,7 @@ class TTSProvider(ABC):
 ```python
 import edge_tts
 import asyncio
-from mutagen.wave import WAVE
+from mutagen.mp3 import MP3
 
 class EdgeTTSProvider(TTSProvider):
     default_action_voice = "zh-CN-YunxiNeural"       # 旁白：男声，成熟稳重
@@ -120,8 +120,8 @@ class EdgeTTSProvider(TTSProvider):
     async def synthesize(self, text: str, voice: str, output_path: str) -> float:
         communicate = edge_tts.Communicate(text=text, voice=voice)
         await communicate.save(output_path)
-        # 读取实际音频时长
-        audio = WAVE(output_path)
+        # 读取实际音频时长（edge-tts 原生输出 mp3）
+        audio = MP3(output_path)
         return audio.info.length
 ```
 
@@ -165,7 +165,7 @@ async def run_generate_tts_job(job: JobRecord, project_id: str, config: dict):
         shot_id = shot["shot_id"]
 
         # ── 旁白轨（action，每个 shot 必有）──
-        action_path = audio_dir / f"{shot_id}_action.wav"
+        action_path = audio_dir / f"{shot_id}_action.mp3"
         if action_path.exists() and action_path.stat().st_size > 0:
             done += 1
             await job.emit_progress(shot_id, track="action", done=done, skipped=True)
@@ -181,7 +181,7 @@ async def run_generate_tts_job(job: JobRecord, project_id: str, config: dict):
 
         # ── 对话轨（dialogue，有台词才生成）──
         if shot.get("dialogue"):
-            dialogue_path = audio_dir / f"{shot_id}_dialogue.wav"
+            dialogue_path = audio_dir / f"{shot_id}_dialogue.mp3"
             if dialogue_path.exists() and dialogue_path.stat().st_size > 0:
                 done += 1
                 await job.emit_progress(shot_id, track="dialogue", done=done, skipped=True)
@@ -225,8 +225,8 @@ clip_duration = max(shot.declared_duration, action_duration + 0.5)
 | 操作 | 路径 |
 |------|------|
 | 读取分镜 | `/app/projects/{project_id}/storyboard.json` |
-| 写入旁白音频 | `/app/projects/{project_id}/audio/{shot_id}_action.wav` |
-| 写入台词音频 | `/app/projects/{project_id}/audio/{shot_id}_dialogue.wav`（有台词时） |
+| 写入旁白音频 | `/app/projects/{project_id}/audio/{shot_id}_action.mp3` |
+| 写入台词音频 | `/app/projects/{project_id}/audio/{shot_id}_dialogue.mp3`（有台词时） |
 | 写入时长元数据 | `/app/projects/{project_id}/audio_durations.json` |
 
 ---
@@ -260,7 +260,7 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.9.2
 edge-tts==6.1.12
-mutagen==1.47.0          # 读取 WAV 时长
+mutagen==1.47.0          # 读取 MP3 时长
 ```
 
 **环境变量：**

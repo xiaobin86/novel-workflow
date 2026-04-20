@@ -302,6 +302,72 @@ Task 结束
 - Task 必须遇到 await 点才能响应取消
 - 因此 job.check_stop() 检查点是必需的
 - 没有检查点的话，Task 可能长时间不响应取消
+
+### 2.3a 关键细节：shot 级原子操作与取消时机
+
+> ⚠️ **重要**：`asyncio.Task.cancel()` 以**单个 shot 的生成**为原子操作单位。
+
+```
+用户点击停止
+    │
+    ▼
+JobHandler 正在执行：
+    for shot in shots:
+        check_stop()          ← 通过，未设置停止标志
+        await generate_shot()  ← 开始生成当前 shot
+        ^
+        │
+    此时用户点击停止 ──────────┘
+        │
+        ▼
+    task.cancel() 发送 CancelledError
+        │
+        ▼
+    但 generate_shot() 不会立即中断！
+        │
+        ▼
+    Provider 继续完成当前 shot 的推理和保存
+        │
+        ▼
+    generate_shot() 返回后
+        │
+        ▼
+    下一个 await 点（emit_progress 或 check_stop）
+        │
+        ▼
+    CancelledError 才被抛出
+        │
+        ▼
+    任务终止
+```
+
+**实际影响**：
+
+| 场景 | 行为 | 结果 |
+|------|------|------|
+| 取消发生在 `check_stop()` 之后、`generate_shot()` 之前 | 正常取消，不生成新 shot | 无额外文件 |
+| 取消发生在 `generate_shot()` 执行期间 | 当前 shot **仍会完成生成**并保存到磁盘 | 可能比预期多 1 个文件 |
+| 取消发生在 `emit_progress()` 期间 | 进度推送完成后取消 | 无额外文件 |
+
+**设计决策**：
+- 接受这种"多生成 1 张"的行为，视为可接受的副作用
+- 不强制在 Provider 内部插入额外的取消检查点（避免过度复杂化 Provider 实现）
+- 断点续传的文件存在性检查会自然跳过已生成的文件，因此重新开始时不受影响
+- 状态验证逻辑（`validateStepStatuses`）也基于此假设：实际文件数可能 ≥ 取消时预期的文件数
+
+**代码体现**（`services/image/job_handler.py` 伪代码）：
+
+```python
+for shot in shots:
+    job.check_stop()  # ← 取消检查点 1：这里响应取消
+    
+    # 如果取消信号在 check_stop() 之后到达：
+    await provider.generate_shot(shot)  # ← 原子操作，期间不响应取消
+    
+    # generate_shot 完成后，到下一个 await 点才处理取消：
+    job.done += 1
+    await job.emit_progress(...)  # ← 取消检查点 2：这里也可能响应取消
+```
 ```
 
 ### 2.4 asyncio.Task 状态转换图

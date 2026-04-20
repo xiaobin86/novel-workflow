@@ -21,6 +21,15 @@ export async function POST(
   });
 
   if (!res.ok) {
+    // Job no longer exists in service (e.g. service restarted) — mark as stopped
+    // so the user can restart rather than being stuck in a broken paused state.
+    if (res.status === 404) {
+      await updateStep(projectId, stepName, { status: "stopped", job_id: null });
+      return NextResponse.json(
+        { error: "任务已失效（服务可能已重启），请点击「重新开始」重新执行" },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: await res.text() }, { status: res.status });
   }
 

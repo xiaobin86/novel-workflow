@@ -21,6 +21,13 @@ export async function POST(
   });
 
   if (!res.ok) {
+    if (res.status === 404) {
+      await updateStep(projectId, stepName, { status: "stopped", job_id: null });
+      return NextResponse.json(
+        { error: "任务已失效（服务可能已重启），已自动标记为已停止" },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: await res.text() }, { status: res.status });
   }
 

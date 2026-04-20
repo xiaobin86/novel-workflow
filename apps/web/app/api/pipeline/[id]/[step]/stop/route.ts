@@ -21,6 +21,11 @@ export async function POST(
   });
 
   if (!res.ok) {
+    if (res.status === 404) {
+      // Job already gone — just mark as stopped locally
+      await updateStep(projectId, stepName, { status: "stopped", job_id: null });
+      return NextResponse.json({ status: "stopped" });
+    }
     return NextResponse.json({ error: await res.text() }, { status: res.status });
   }
 

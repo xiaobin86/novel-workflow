@@ -25,8 +25,19 @@ export function useStepControl(
       const res = await fetch(`/api/pipeline/${projectId}/${step}/${action}`, { method: "POST" });
       if (!res.ok) {
         let msg = `HTTP ${res.status}`;
-        try { const body = await res.json(); msg = body.error ?? msg; } catch { /* ignore */ }
+        try {
+          const body = await res.json();
+          // body.error may itself be a JSON string (e.g. FastAPI {"detail":"Not Found"})
+          const raw = body.error ?? msg;
+          try {
+            const inner = JSON.parse(raw);
+            msg = inner.detail ?? inner.message ?? raw;
+          } catch {
+            msg = raw;
+          }
+        } catch { /* ignore */ }
         setErrorFor(step, msg);
+        await mutateState(); // refresh state even on error (e.g. status changed to stopped)
         return;
       }
       await mutateState();

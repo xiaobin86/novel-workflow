@@ -108,7 +108,7 @@ apps/web/
 | completed | ✓ | 绿色 |
 | failed | ✗ | 红色 |
 
-> 注：`paused`（已暂停）状态在 UI 中存在定义，但 **暂停/恢复功能未实现**，当前仅 `stop` 可用。
+> 注：状态仅有 `pending / in_progress / stopped / completed / failed` 五种，**无 `paused` 状态**（设计决策：stop + 断点续传重启即可满足需求，无需实现 pause/resume）。
 
 ---
 
@@ -221,27 +221,13 @@ export async function GET(req: Request, { params }) {
 }
 ```
 
-#### `POST /api/pipeline/[id]/[step]/pause`（【新增】暂停步骤）
+#### `POST /api/pipeline/[id]/[step]/stop`（停止步骤）
 
 ```typescript
-// 调用对应服务的 POST /jobs/{job_id}/pause
-// 更新 state.json status = "paused"
-// 响应：200 { status: "paused" }
-```
-
-#### `POST /api/pipeline/[id]/[step]/resume`（【新增】恢复步骤）
-
-```typescript
-// 调用对应服务的 POST /jobs/{job_id}/resume
-// 更新 state.json status = "in_progress"
-// 响应：200 { status: "in_progress" }
-```
-
-#### `POST /api/pipeline/[id]/[step]/stop`（【新增】停止步骤）
-
-```typescript
-// 调用对应服务的 POST /jobs/{job_id}/stop
-// 更新 state.json status = "stopped"
+// 1. 读取 state.json 取 job_id
+// 2. 调用对应服务的 POST /jobs/{job_id}/stop
+//    若服务返回 404（服务重启后 Job 丢失）→ 视为停止成功
+// 3. 更新 state.json: status = "stopped"
 // 响应：200 { status: "stopped" }
 ```
 
@@ -301,13 +287,11 @@ interface StepCardProps {
   step: StepName;
   status: "pending" | "in_progress" | "stopped" | "completed" | "failed";
   isActive: boolean;
-  onStart: () => void;
-  // onPause: () => void;   // ❌ 未实现
-  // onResume: () => void;  // ❌ 未实现
-  onStop: () => void;       // ✅ 已实现
-  onRestart: () => void;    // ✅ 已实现（stopped 状态）
-  onConfirm: () => void;   // 仅在 completed 且非 auto-mode 时显示
-  children: React.ReactNode;  // 步骤内容区
+  onStart: (step: StepName) => void;
+  onStop: (step: StepName) => void;
+  onDelete: (step: StepName) => Promise<void>;      // 删除全部产物（reset，不重启）
+  onDeleteItem: (step: StepName, shot_id: string) => Promise<void>;
+  // 注：无 onPause / onResume（未实现，设计决策：stop+断点续传即可）
 }
 ```
 
@@ -721,9 +705,9 @@ ASSEMBLY_SERVICE_URL=http://localhost:8005
 
 ---
 
-## 10. 步骤生命周期控制 UI（【新增】暂停/恢复/停止）
+## 10. 步骤生命周期控制 UI（停止/重置）
 
-> 详细设计见关联文档 `08-step-lifecycle-control.md`。本节仅描述 UI 层面的变更。
+> 详细设计见关联文档 `08-step-lifecycle-control.md`。本节描述 UI 层面的实现。
 
 ### 10.1 扩展后的状态徽章
 
@@ -759,36 +743,26 @@ ASSEMBLY_SERVICE_URL=http://localhost:8005
 
 ### 10.3 useStepControl Hook
 
-⚠️ **实际仅实现 `stopStep`**，`pauseStep` 和 `resumeStep` 不存在（后端无对应 API 路由）。
+**文件**：`apps/web/hooks/useStepControl.ts`
 
 ```typescript
-// hooks/useStepControl.ts
 export function useStepControl(projectId: string, mutateState: () => Promise<void>) {
   const [loading, setLoading] = useState<Record<string, boolean>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // const pauseStep = ...  // ❌ 未实现
-  // const resumeStep = ... // ❌ 未实现
+  const stopStep = useCallback((step: StepName) => callControl(step, "stop"), [...]);
 
-  const stopStep = useCallback(async (step: StepName) => {
-    setLoading(prev => ({ ...prev, [step]: true }));
-    try {
-      await fetch(`/api/pipeline/${projectId}/${step}/stop`, { method: "POST" });
-      await mutateState();
-    } finally {
-      setLoading(prev => ({ ...prev, [step]: false }));
-    }
-  }, [projectId, mutateState]);
-
-  return { stopStep, loading };
+  return { stopStep, loading, errors };
 }
 ```
 
-### 10.4 自动模式与暂停的交互
+仅暴露 `stopStep`，无 pause/resume（设计决策：stop + 断点续传重启即可）。
 
-- **自动推进条件**：`autoMode` 仅在步骤为 `completed` 时触发下一步
-- 如果步骤为 `stopped`，`autoMode` 不会触发任何操作（等待用户手动重新开始）
-- 如果用户 `stop` 后 `restart`，重新开始执行，完成后如果 `autoMode` 开启，正常触发下一步
-- 注：`paused` 状态未实现，因此不涉及暂停与自动模式的交互
+### 10.4 自动模式与停止的交互
+
+- **自动推进条件**：`autoMode` 仅在步骤状态为 `completed` 时触发下一步
+- 步骤为 `stopped` 时，`autoMode` 不触发任何操作，等待用户手动重新开始
+- 用户 stop 后 restart，重新执行完成后，若 `autoMode` 开启，正常触发下一步
 
 ### 10.5 断点续传提示
 
@@ -805,7 +779,7 @@ export function useStepControl(projectId: string, mutateState: () => Promise<voi
 
 | 技术 | 用途 |
 |------|------|
-| Next.js 15 (App Router) | 页面路由、API Routes |
+| Next.js 16 (App Router) | 页面路由、API Routes |
 | React 19 | UI 组件 |
 | shadcn/ui + Tailwind CSS | 基础组件库和样式 |
 | SWR | 项目状态轮询 |
@@ -861,7 +835,8 @@ export function useStepControl(projectId: string, mutateState: () => Promise<voi
 |------|------|---------|------|
 | 2026-04-18 | v1.0 | 初始版本，完整 Web UI 设计 | Sisyphus |
 | 2026-04-20 | v1.1 | 【新增】步骤生命周期控制 UI（暂停/恢复/停止） | Sisyphus |
-| 2026-04-20 | v1.2 | 【新增】reset/regenerate-item 路由、step-artifacts/delete-project-dialog/confirm-dialog 组件、files API 路由、暂停/停止状态枚举 | Claude Sonnet 4.6 |
+| 2026-04-20 | v1.2 | 【新增】reset/regenerate-item 路由、step-artifacts/delete-project-dialog/confirm-dialog 组件、files API 路由 | Claude Sonnet 4.6 |
+| 2026-04-21 | v1.3 | 【同步代码】去除 pause/resume 路由（设计决策：stop+断点续传）、修正 Next.js 版本（15→16）、更新 StepCard props、去除 paused 状态枚举 | Claude Sonnet 4.6 |
 
 ---
 

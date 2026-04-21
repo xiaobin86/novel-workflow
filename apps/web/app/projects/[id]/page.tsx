@@ -469,16 +469,6 @@ export default function ProjectPage() {
     }
   }
 
-  /** Reset all artifacts for a step, then restart it (step-level regeneration). */
-  async function regenerateStep(step: StepName) {
-    const res = await fetch(`/api/pipeline/${projectId}/${step}/reset`, { method: "POST" });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error ?? `重置失败（${res.status}）`);
-    }
-    await startStep(step);
-  }
-
   /** Delete all artifacts for a step without restarting it. */
   async function deleteStep(step: StepName) {
     const res = await fetch(`/api/pipeline/${projectId}/${step}/reset`, { method: "POST" });

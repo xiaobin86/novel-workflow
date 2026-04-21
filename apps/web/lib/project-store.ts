@@ -289,11 +289,22 @@ async function validateStepStatuses(id: string, state: ProjectState): Promise<bo
     if (step === "storyboard" || step === "assembly") continue;
 
     const currentStatus = state.steps[step].status;
-    if (currentStatus === "pending") continue;     // No files expected
-    if (currentStatus === "in_progress") continue; // Active job — don't interfere with running tasks
 
-    // Get actual file count from disk
+    // Get actual file count from disk (needed for both pending and non-pending statuses)
     const result = await recoverStepResult(id, step);
+
+    if (currentStatus === "pending") {
+      // Even if status is pending, check if files actually exist on disk.
+      // This handles cases where a step was started outside the frontend
+      // pipeline API (e.g., direct service API call) and state.json wasn't updated.
+      if (result) {
+        state.steps[step].status = "stopped";
+        state.steps[step].updated_at = now;
+        dirty = true;
+      }
+      continue;
+    }
+    if (currentStatus === "in_progress") continue; // Active job — don't interfere with running tasks
     if (!result) {
       // No files on disk but state says non-pending/non-in_progress → correct to pending
       state.steps[step].status = "pending";
@@ -347,8 +358,16 @@ export async function readState(id: string): Promise<ProjectState> {
     const raw = await fs.readFile(statePath(id), "utf-8");
     state = JSON.parse(raw) as ProjectState;
   } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      // state.json missing — rebuild from artifacts
+    const code = (err as NodeJS.ErrnoException).code;
+    const isNotFound = code === "ENOENT";
+    const isParseError = err instanceof SyntaxError;
+    if (isNotFound || isParseError) {
+      // state.json missing or corrupted — rebuild from disk artifacts.
+      // recoverStateFromDisk reads title/episode from storyboard.json and
+      // rewrites a clean state.json, so subsequent reads will succeed.
+      if (isParseError) {
+        console.warn(`[project-store] state.json for ${id} is malformed (${(err as SyntaxError).message}), recovering from disk`);
+      }
       const recovered = await recoverStateFromDisk(id);
       if (recovered) return recovered;
     }
@@ -421,8 +440,8 @@ export async function listProjects(): Promise<ProjectMeta[]> {
           Object.entries(state.steps).map(([k, v]) => [k, v.status])
         ) as Record<StepName, StepStatus>,
       });
-    } catch {
-      // skip malformed projects
+    } catch (err) {
+      console.warn(`[project-store] skipping project ${entry}:`, err);
     }
   }
   return results.sort((a, b) => b.created_at.localeCompare(a.created_at));

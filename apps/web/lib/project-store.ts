@@ -415,6 +415,8 @@ export async function updateStep(
     ...patch,
     updated_at: new Date().toISOString(),
   };
+  // Ensure computed field is never persisted
+  delete (state as Partial<ProjectState>).shot_file_counts;
   await _writeAtomic(statePath(id), JSON.stringify(state, null, 2));
   return state;
 }
